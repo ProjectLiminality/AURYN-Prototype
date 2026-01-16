@@ -265,3 +265,6 @@ Most DreamNode READMEs contain boilerplate template text, causing false positive
 ## Efficiency: File Path Input
 
 Stream processing should accept file paths, not require text copying into context. Tool reads file directly - tokens spent only on results, not input duplication. Async batch processing: point to transcript file, results appear in DreamNodes without babysitting.
+## Tool Minimalism: Constraints Enable Freedom
+
+Audit tools ruthlessly - each constraint can limit intelligence. append_to_readme forces "tweet-threading" instead of holistic README editing with full context. Optimal: minimal tool set that enables maximum freedom, not constrains it. Read full README → intelligent edit beats append-only.
