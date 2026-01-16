@@ -262,3 +262,6 @@ Invert the flow: deterministic semantic search FIRST (sliding window, low thresh
 ## Known Issue: Template README Noise
 
 Most DreamNode READMEs contain boilerplate template text, causing false positives in semantic search. Solution: batch-identify template READMEs (they'll have near-perfect similarity to template text), then clear them to minimal state. READMEs should be genuine pointers - title, DreamTalk, and organic description only.
+## Efficiency: File Path Input
+
+Stream processing should accept file paths, not require text copying into context. Tool reads file directly - tokens spent only on results, not input duplication. Async batch processing: point to transcript file, results appear in DreamNodes without babysitting.

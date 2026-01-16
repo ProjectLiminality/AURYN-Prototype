@@ -246,7 +246,8 @@ export async function checkOllamaStatus(): Promise<{
  * Returns candidate DreamNodes for each chunk - LLM then filters false positives
  */
 export async function processStreamOfConsciousness(args: {
-  text: string;
+  text?: string;  // Direct text input
+  file_path?: string;  // OR path to transcript/text file (more token-efficient)
   chunk_size?: number;  // words per chunk (default: 150)
   chunk_overlap?: number;  // overlap in words (default: 30)
   threshold?: number;  // similarity threshold (default: 0.35 - low to catch subtle mentions)
@@ -292,6 +293,19 @@ export async function processStreamOfConsciousness(args: {
       };
     }
 
+    // Get text from either direct input or file
+    let inputText: string;
+    if (args.file_path) {
+      if (!fs.existsSync(args.file_path)) {
+        return { success: false, error: `File not found: ${args.file_path}` };
+      }
+      inputText = fs.readFileSync(args.file_path, 'utf-8');
+    } else if (args.text) {
+      inputText = args.text;
+    } else {
+      return { success: false, error: 'Either text or file_path must be provided' };
+    }
+
     // Configuration with defaults
     const chunkSize = args.chunk_size ?? 150;
     const chunkOverlap = args.chunk_overlap ?? 30;
@@ -299,7 +313,7 @@ export async function processStreamOfConsciousness(args: {
     const maxCandidatesPerChunk = args.max_candidates_per_chunk ?? 5;
 
     // Tokenize into words
-    const words = args.text.split(/\s+/).filter(w => w.length > 0);
+    const words = inputText.split(/\s+/).filter(w => w.length > 0);
     const totalWords = words.length;
 
     // Create sliding window chunks
@@ -499,7 +513,11 @@ export const semanticTools = {
       properties: {
         text: {
           type: 'string',
-          description: 'The stream of consciousness text to process (transcript, monologue, etc.)'
+          description: 'Direct text input (use this OR file_path, not both)'
+        },
+        file_path: {
+          type: 'string',
+          description: 'Path to transcript/text file - more token-efficient than passing text directly'
         },
         chunk_size: {
           type: 'number',
@@ -518,7 +536,7 @@ export const semanticTools = {
           description: 'Maximum candidate DreamNodes per chunk (default: 5)'
         }
       },
-      required: ['text']
+      required: []  // Either text or file_path required, validated in handler
     },
     handler: processStreamOfConsciousness
   }
