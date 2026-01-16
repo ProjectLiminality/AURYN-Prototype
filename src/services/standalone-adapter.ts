@@ -183,36 +183,32 @@ export async function discoverDreamNodes(vaultPath: string): Promise<VaultScanRe
   const discovered: DiscoveredNode[] = [];
   const errors: string[] = [];
 
-  function scanDir(dirPath: string, depth: number = 0): void {
-    if (depth > 2) return; // maxdepth 2
+  // Only scan direct children of vault root (sovereign DreamNodes)
+  // Submodules exist as sovereign nodes at root level, so no need to recurse
+  try {
+    const entries = fs.readdirSync(vaultPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+        const dirPath = path.join(vaultPath, entry.name);
+        const uddPath = path.join(dirPath, '.udd');
 
-    const uddPath = path.join(dirPath, '.udd');
-    if (fs.existsSync(uddPath)) {
-      try {
-        const content = fs.readFileSync(uddPath, 'utf-8');
-        const udd = JSON.parse(content) as UDDFile;
-        if (udd.uuid && udd.title && udd.type) {
-          discovered.push({ dirPath, udd });
-        }
-      } catch (e) {
-        errors.push(`Failed to read ${uddPath}: ${e}`);
-      }
-    }
-
-    // Scan subdirectories
-    try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
-          scanDir(path.join(dirPath, entry.name), depth + 1);
+        if (fs.existsSync(uddPath)) {
+          try {
+            const content = fs.readFileSync(uddPath, 'utf-8');
+            const udd = JSON.parse(content) as UDDFile;
+            if (udd.uuid && udd.title && udd.type) {
+              discovered.push({ dirPath, udd });
+            }
+          } catch (e) {
+            errors.push(`Failed to read ${uddPath}: ${e}`);
+          }
         }
       }
-    } catch {
-      // Ignore permission errors
     }
+  } catch {
+    // Ignore permission errors
   }
 
-  scanDir(vaultPath);
   return { discovered, errors };
 }
 
@@ -344,10 +340,15 @@ export function discoverObsidianVaults(): VaultInfo[] {
     }
 
     const vaults: VaultInfo[] = [];
+    const seenPaths = new Set<string>();
 
     for (const vaultId of Object.keys(config.vaults)) {
       const vaultData = config.vaults[vaultId];
       if (vaultData.path && typeof vaultData.path === 'string') {
+        // Deduplicate by path
+        if (seenPaths.has(vaultData.path)) continue;
+        seenPaths.add(vaultData.path);
+
         if (fs.existsSync(vaultData.path)) {
           vaults.push({
             path: vaultData.path,
@@ -367,15 +368,23 @@ export function discoverObsidianVaults(): VaultInfo[] {
 /**
  * Discover all DreamNodes across all Obsidian vaults
  * Uses InterBrain's discoverDreamNodes for each vault
+ * Deduplicates by UUID to avoid duplicates from overlapping vault scans
  */
 export async function discoverAllDreamNodes(): Promise<DreamNodeInfo[]> {
   const vaults = discoverObsidianVaults();
+  const seenUUIDs = new Set<string>();
   const allDreamNodes: DreamNodeInfo[] = [];
 
   for (const vault of vaults) {
     const result = await discoverDreamNodes(vault.path);
 
     for (const node of result.discovered) {
+      // Skip if we've already seen this UUID (deduplication)
+      if (seenUUIDs.has(node.udd.uuid)) {
+        continue;
+      }
+      seenUUIDs.add(node.udd.uuid);
+
       allDreamNodes.push({
         uuid: node.udd.uuid,
         title: node.udd.title,
@@ -739,16 +748,19 @@ export class SemanticSearchService {
       await this.indexAllNodes();
     }
 
-    // Generate query embedding using InterBrain's service
+    // Generate query embedding
     const queryEmbedding = await this.embeddingService.processLongText(query);
 
-    // Calculate similarities using InterBrain's VectorUtils
-    const results: SearchResult[] = [];
+    // Get all nodes once (already deduplicated by UUID)
     const allNodes = await discoverAllDreamNodes();
+    const nodesByUUID = new Map(allNodes.map(n => [n.uuid, n]));
 
-    for (const node of allNodes) {
-      const vectorData = this.vectorCache.get(node.uuid);
-      if (!vectorData) continue;
+    // Calculate similarities - iterate over cache to avoid duplicates
+    const results: SearchResult[] = [];
+
+    for (const [uuid, vectorData] of this.vectorCache.entries()) {
+      const node = nodesByUUID.get(uuid);
+      if (!node) continue;
 
       const score = VectorUtils.cosineSimilarity(queryEmbedding, vectorData.embedding);
 

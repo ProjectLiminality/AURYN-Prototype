@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "auryn": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "cwd": "/Users/davidrug/RealDealVault/AURYN"
+    }
+  }
+}
