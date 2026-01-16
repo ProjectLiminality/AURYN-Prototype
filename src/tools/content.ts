@@ -1,5 +1,6 @@
 /**
  * Content MCP Tools - README read/write operations
+ * Uses InterBrain's services via standalone-adapter
  *
  * Follows the Conservative Signal Philosophy:
  * - Only append validated, high-signal content
@@ -26,7 +27,7 @@ export async function readReadme(args: {
 }> {
   try {
     // Find DreamNode
-    const node = DreamNodeService.getDreamNode(args.identifier);
+    const node = await DreamNodeService.getDreamNode(args.identifier);
     if (!node) {
       return {
         success: false,
@@ -82,7 +83,7 @@ export async function appendToReadme(args: {
 }> {
   try {
     // Find DreamNode
-    const node = DreamNodeService.getDreamNode(args.identifier);
+    const node = await DreamNodeService.getDreamNode(args.identifier);
     if (!node) {
       return {
         success: false,
@@ -177,7 +178,7 @@ export async function writeReadme(args: {
 }> {
   try {
     // Find DreamNode
-    const node = DreamNodeService.getDreamNode(args.identifier);
+    const node = await DreamNodeService.getDreamNode(args.identifier);
     if (!node) {
       return {
         success: false,

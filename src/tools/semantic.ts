@@ -1,8 +1,15 @@
 /**
  * Semantic Search MCP Tools - Vector-based search operations
+ * Uses InterBrain's OllamaEmbeddingService via standalone-adapter
  */
 
-import { SemanticSearchService, EmbeddingService } from '../services/standalone-adapter.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import {
+  SemanticSearchService,
+  createOllamaEmbeddingService,
+  discoverAllDreamNodes
+} from '../services/standalone-adapter.js';
 
 // Global semantic search service instance
 let semanticSearchService: SemanticSearchService | null = null;
@@ -37,14 +44,12 @@ export async function semanticSearch(args: {
     path: string;
   }>;
   error?: string;
-  fallback_used?: boolean;
 }> {
   try {
     const service = getSemanticSearchService();
 
     // Check if Ollama is available
-    const embeddingService = new EmbeddingService();
-    const ollamaAvailable = await embeddingService.isAvailable();
+    const ollamaAvailable = await service.isAvailable();
 
     if (!ollamaAvailable) {
       return {
@@ -103,8 +108,7 @@ export async function getContextForConversation(args: {
     const service = getSemanticSearchService();
 
     // Check if Ollama is available
-    const embeddingService = new EmbeddingService();
-    const ollamaAvailable = await embeddingService.isAvailable();
+    const ollamaAvailable = await service.isAvailable();
 
     if (!ollamaAvailable) {
       return {
@@ -120,9 +124,6 @@ export async function getContextForConversation(args: {
     });
 
     // Enhance results with README previews
-    const fs = await import('fs');
-    const path = await import('path');
-
     const enhancedResults = results.map(r => {
       let readmePreview: string | undefined;
 
@@ -176,7 +177,7 @@ export async function indexDreamnodes(args: {
 }> {
   try {
     // Check if Ollama is available
-    const embeddingService = new EmbeddingService();
+    const embeddingService = createOllamaEmbeddingService();
     const ollamaAvailable = await embeddingService.isAvailable();
 
     if (!ollamaAvailable) {
@@ -209,7 +210,7 @@ export async function indexDreamnodes(args: {
 
 /**
  * Tool: check_ollama_status
- * Check if Ollama embedding service is available
+ * Check if the Ollama embedding service is available
  */
 export async function checkOllamaStatus(): Promise<{
   available: boolean;
@@ -220,7 +221,7 @@ export async function checkOllamaStatus(): Promise<{
   const baseUrl = 'http://localhost:11434';
   const model = 'nomic-embed-text';
 
-  const embeddingService = new EmbeddingService(baseUrl, model);
+  const embeddingService = createOllamaEmbeddingService(baseUrl, model);
   const available = await embeddingService.isAvailable();
 
   if (!available) {

@@ -1,5 +1,6 @@
 /**
  * Submodule MCP Tools - DreamNode relationship operations
+ * Uses InterBrain's services via standalone-adapter
  */
 
 import { SubmoduleService, DreamNodeService } from '../services/standalone-adapter.js';
@@ -21,7 +22,7 @@ export async function addSubmodule(args: {
 }> {
   try {
     // Find parent DreamNode
-    const parent = DreamNodeService.getDreamNode(args.parent_identifier);
+    const parent = await DreamNodeService.getDreamNode(args.parent_identifier);
     if (!parent) {
       return {
         success: false,
@@ -30,7 +31,7 @@ export async function addSubmodule(args: {
     }
 
     // Find child DreamNode
-    const child = DreamNodeService.getDreamNode(args.child_identifier);
+    const child = await DreamNodeService.getDreamNode(args.child_identifier);
     if (!child) {
       return {
         success: false,
@@ -89,7 +90,7 @@ export async function removeSubmodule(args: {
 }> {
   try {
     // Find parent DreamNode
-    const parent = DreamNodeService.getDreamNode(args.parent_identifier);
+    const parent = await DreamNodeService.getDreamNode(args.parent_identifier);
     if (!parent) {
       return {
         success: false,
@@ -143,7 +144,7 @@ export async function listSubmodules(args: {
 }> {
   try {
     // Find DreamNode
-    const node = DreamNodeService.getDreamNode(args.identifier);
+    const node = await DreamNodeService.getDreamNode(args.identifier);
     if (!node) {
       return {
         success: false,

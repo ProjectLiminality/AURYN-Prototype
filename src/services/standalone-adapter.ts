@@ -1,190 +1,435 @@
 /**
  * Standalone Adapter for InterBrain Services
  *
- * Provides standalone implementations of InterBrain services
- * without requiring Obsidian's Plugin or App context.
+ * Imports and re-exports InterBrain's Obsidian-free services.
+ * Only adds thin wrappers where InterBrain doesn't provide standalone functions.
+ *
+ * Note: InterBrain files are TypeScript - we use tsx for runtime imports.
+ * The adapter re-implements essential services for standalone operation.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { UDDFile, SupermoduleEntry, DreamNodeInfo, VectorData, SearchResult } from '../types.js';
-import { discoverAllDreamNodes, findDreamNode, getDreamNodeFromPath } from './vault-discovery.js';
-import { simpleGit, SimpleGit } from 'simple-git';
 import { randomUUID } from 'crypto';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
+
+// ============================================================================
+// LOCAL TYPE DEFINITIONS
+// Mirrors InterBrain types for standalone use
+// ============================================================================
+
+export interface SupermoduleEntry {
+  radicleId: string;
+  title: string;
+  atCommit: string;
+  addedAt: number;
+}
+
+export interface UDDFile {
+  uuid: string;
+  title: string;
+  type: 'dream' | 'dreamer';
+  dreamTalk: string;
+  submodules: string[];
+  supermodules: (string | SupermoduleEntry)[];
+  radicleId?: string;
+}
 
 /**
- * Standalone UDD Service - mirrors InterBrain's UDDService
- * Uses Node.js fs directly (no Obsidian dependency)
+ * DreamNode discovery result
  */
-export class UDDService {
-  /**
-   * Read and parse a .udd file
-   */
-  static readUDD(dreamNodePath: string): UDDFile {
-    const uddPath = path.join(dreamNodePath, '.udd');
+export interface DreamNodeInfo {
+  uuid: string;
+  title: string;
+  type: 'dream' | 'dreamer';
+  path: string;
+  vaultPath: string;
+  radicleId?: string;
+  submodules: string[];
+  supermodules: (string | SupermoduleEntry)[];
+}
 
-    try {
-      const content = fs.readFileSync(uddPath, 'utf-8');
-      const udd = JSON.parse(content) as UDDFile;
+/**
+ * Vault information
+ */
+export interface VaultInfo {
+  path: string;
+  name: string;
+}
 
-      if (!udd.uuid || !udd.title || !udd.type) {
-        throw new Error(`Invalid .udd file: missing required fields in ${uddPath}`);
-      }
-
-      // Ensure arrays exist
-      udd.submodules = udd.submodules || [];
-      udd.supermodules = udd.supermodules || [];
-
-      return udd;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to read .udd file from ${dreamNodePath}: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * Write a UDD object to a .udd file
-   */
-  static writeUDD(dreamNodePath: string, udd: UDDFile): void {
-    const uddPath = path.join(dreamNodePath, '.udd');
-
-    try {
-      const content = JSON.stringify(udd, null, 2);
-      fs.writeFileSync(uddPath, content, 'utf-8');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to write .udd file to ${dreamNodePath}: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * Create a new .udd file
-   */
-  static createUDD(dreamNodePath: string, data: {
-    uuid: string;
+/**
+ * Vector data for semantic search (local storage)
+ */
+export interface VectorData {
+  nodeId: string;
+  contentHash: string;
+  embedding: number[];
+  lastIndexed: number;
+  metadata: {
     title: string;
     type: 'dream' | 'dreamer';
-    dreamTalk?: string;
-    radicleId?: string;
-  }): void {
-    const udd: UDDFile = {
-      uuid: data.uuid,
-      title: data.title,
-      type: data.type,
-      dreamTalk: data.dreamTalk || '',
-      submodules: [],
-      supermodules: [],
-      radicleId: data.radicleId
-    };
-    this.writeUDD(dreamNodePath, udd);
-  }
+    wordCount: number;
+    commitHash?: string;
+  };
+}
 
-  /**
-   * Update metadata in a .udd file
-   */
-  static updateUDD(dreamNodePath: string, updates: Partial<UDDFile>): void {
-    const udd = this.readUDD(dreamNodePath);
+/**
+ * Search result with similarity score
+ */
+export interface SearchResult {
+  node: DreamNodeInfo;
+  score: number;
+  snippet?: string;
+}
 
-    // Apply updates (only allow certain fields to be updated)
-    if (updates.title !== undefined) udd.title = updates.title;
-    if (updates.type !== undefined) udd.type = updates.type;
-    if (updates.dreamTalk !== undefined) udd.dreamTalk = updates.dreamTalk;
-    if (updates.email !== undefined) udd.email = updates.email;
-    if (updates.phone !== undefined) udd.phone = updates.phone;
-    if (updates.radicleId !== undefined) udd.radicleId = updates.radicleId;
-    if (updates.did !== undefined) udd.did = updates.did;
-    if (updates.githubRepoUrl !== undefined) udd.githubRepoUrl = updates.githubRepoUrl;
-    if (updates.githubPagesUrl !== undefined) udd.githubPagesUrl = updates.githubPagesUrl;
+// ============================================================================
+// UDD SERVICE
+// Direct implementation for standalone use (mirrors InterBrain's UDDService)
+// ============================================================================
 
-    this.writeUDD(dreamNodePath, udd);
-  }
-
-  /**
-   * Add a submodule relationship
-   */
-  static addSubmodule(dreamNodePath: string, childRadicleId: string): boolean {
-    const udd = this.readUDD(dreamNodePath);
-
-    if (udd.submodules.includes(childRadicleId)) {
-      return false;
-    }
-
-    udd.submodules.push(childRadicleId);
-    this.writeUDD(dreamNodePath, udd);
-    return true;
-  }
-
-  /**
-   * Remove a submodule relationship
-   */
-  static removeSubmodule(dreamNodePath: string, childRadicleId: string): boolean {
-    const udd = this.readUDD(dreamNodePath);
-
-    const index = udd.submodules.indexOf(childRadicleId);
-    if (index === -1) {
-      return false;
-    }
-
-    udd.submodules.splice(index, 1);
-    this.writeUDD(dreamNodePath, udd);
-    return true;
-  }
-
-  /**
-   * Add a supermodule entry
-   */
-  static addSupermoduleEntry(dreamNodePath: string, entry: SupermoduleEntry): boolean {
-    const udd = this.readUDD(dreamNodePath);
-
-    const exists = udd.supermodules.some(existing =>
-      typeof existing === 'string'
-        ? existing === entry.radicleId
-        : existing.radicleId === entry.radicleId
-    );
-
-    if (exists) {
-      return false;
-    }
-
-    udd.supermodules.push(entry);
-    this.writeUDD(dreamNodePath, udd);
-    return true;
-  }
-
-  /**
-   * Remove a supermodule relationship
-   */
-  static removeSupermodule(dreamNodePath: string, radicleId: string): boolean {
-    const udd = this.readUDD(dreamNodePath);
-
-    const index = udd.supermodules.findIndex(entry =>
-      typeof entry === 'string' ? entry === radicleId : entry.radicleId === radicleId
-    );
-
-    if (index === -1) {
-      return false;
-    }
-
-    udd.supermodules.splice(index, 1);
-    this.writeUDD(dreamNodePath, udd);
-    return true;
-  }
-
-  /**
-   * Check if .udd file exists
-   */
-  static uddExists(dreamNodePath: string): boolean {
+export class UDDService {
+  static async readUDD(dreamNodePath: string): Promise<UDDFile> {
     const uddPath = path.join(dreamNodePath, '.udd');
-    return fs.existsSync(uddPath);
+    const content = fs.readFileSync(uddPath, 'utf-8');
+    const udd = JSON.parse(content) as UDDFile;
+
+    if (!udd.uuid || !udd.title || !udd.type) {
+      throw new Error(`Invalid .udd file: missing required fields in ${uddPath}`);
+    }
+
+    // Ensure arrays exist
+    udd.submodules = udd.submodules || [];
+    udd.supermodules = udd.supermodules || [];
+
+    return udd;
+  }
+
+  static async writeUDD(dreamNodePath: string, udd: UDDFile): Promise<void> {
+    const uddPath = path.join(dreamNodePath, '.udd');
+    fs.writeFileSync(uddPath, JSON.stringify(udd, null, 2), 'utf-8');
+  }
+
+  static async addSubmodule(dreamNodePath: string, radicleId: string): Promise<void> {
+    const udd = await this.readUDD(dreamNodePath);
+    if (!udd.submodules.includes(radicleId)) {
+      udd.submodules.push(radicleId);
+      await this.writeUDD(dreamNodePath, udd);
+    }
+  }
+
+  static async addSupermoduleEntry(dreamNodePath: string, entry: SupermoduleEntry): Promise<void> {
+    const udd = await this.readUDD(dreamNodePath);
+    const exists = udd.supermodules.some(s =>
+      typeof s === 'object' && s.radicleId === entry.radicleId
+    );
+    if (!exists) {
+      udd.supermodules.push(entry);
+      await this.writeUDD(dreamNodePath, udd);
+    }
+  }
+}
+
+// ============================================================================
+// GIT UTILITIES
+// Direct implementation for standalone use (mirrors InterBrain's git-utils)
+// ============================================================================
+
+export async function initRepo(dirPath: string): Promise<void> {
+  await execAsync('git init', { cwd: dirPath });
+}
+
+export function isGitRepo(dirPath: string): boolean {
+  return fs.existsSync(path.join(dirPath, '.git'));
+}
+
+export async function commitAllChanges(dirPath: string, message: string): Promise<void> {
+  await execAsync('git add -A', { cwd: dirPath });
+  await execAsync(`git commit -m "${message.replace(/"/g, '\\"')}"`, { cwd: dirPath });
+}
+
+export function getSubmoduleNames(dirPath: string): string[] {
+  const gitmodulesPath = path.join(dirPath, '.gitmodules');
+  if (!fs.existsSync(gitmodulesPath)) return [];
+
+  const content = fs.readFileSync(gitmodulesPath, 'utf-8');
+  const names: string[] = [];
+  const regex = /\[submodule "([^"]+)"\]/g;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    names.push(match[1]);
+  }
+  return names;
+}
+
+// ============================================================================
+// VAULT SCANNER
+// Direct implementation for standalone use (mirrors InterBrain's vault-scanner)
+// ============================================================================
+
+export interface DiscoveredNode {
+  dirPath: string;
+  udd: UDDFile;
+}
+
+export interface VaultScanResult {
+  discovered: DiscoveredNode[];
+  errors: string[];
+}
+
+export async function discoverDreamNodes(vaultPath: string): Promise<VaultScanResult> {
+  const discovered: DiscoveredNode[] = [];
+  const errors: string[] = [];
+
+  function scanDir(dirPath: string, depth: number = 0): void {
+    if (depth > 2) return; // maxdepth 2
+
+    const uddPath = path.join(dirPath, '.udd');
+    if (fs.existsSync(uddPath)) {
+      try {
+        const content = fs.readFileSync(uddPath, 'utf-8');
+        const udd = JSON.parse(content) as UDDFile;
+        if (udd.uuid && udd.title && udd.type) {
+          discovered.push({ dirPath, udd });
+        }
+      } catch (e) {
+        errors.push(`Failed to read ${uddPath}: ${e}`);
+      }
+    }
+
+    // Scan subdirectories
+    try {
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+          scanDir(path.join(dirPath, entry.name), depth + 1);
+        }
+      }
+    } catch {
+      // Ignore permission errors
+    }
+  }
+
+  scanDir(vaultPath);
+  return { discovered, errors };
+}
+
+// ============================================================================
+// OLLAMA EMBEDDING SERVICE
+// Direct implementation for standalone use (mirrors InterBrain's service)
+// ============================================================================
+
+export interface EmbeddingConfig {
+  chunkSize: number;
+  chunkOverlap: number;
+  maxRetries: number;
+  retryDelay: number;
+}
+
+export const DEFAULT_EMBEDDING_CONFIG: EmbeddingConfig = {
+  chunkSize: 500,
+  chunkOverlap: 100,
+  maxRetries: 3,
+  retryDelay: 1000
+};
+
+export class OllamaEmbeddingService {
+  private baseUrl: string;
+  private model: string;
+
+  constructor(baseUrl: string = 'http://localhost:11434', model: string = 'nomic-embed-text') {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.model = model;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/tags`);
+      if (!response.ok) return false;
+
+      const data = await response.json() as { models: Array<{ name: string; model: string }> };
+      return data.models.some(m =>
+        m.name === this.model ||
+        m.model === this.model ||
+        m.name.startsWith(`${this.model}:`)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  async generateEmbedding(text: string): Promise<number[]> {
+    const response = await fetch(`${this.baseUrl}/api/embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: this.model, prompt: text })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Ollama API error: ${response.status}`);
+    }
+
+    const data = await response.json() as { embedding: number[] };
+    return data.embedding;
+  }
+
+  async processLongText(text: string): Promise<number[]> {
+    // For simplicity, just embed the full text (truncated if needed)
+    const truncated = text.length > 8000 ? text.substring(0, 8000) : text;
+    return this.generateEmbedding(truncated);
+  }
+}
+
+export function createOllamaEmbeddingService(
+  baseUrl: string = 'http://localhost:11434',
+  model: string = 'nomic-embed-text'
+): OllamaEmbeddingService {
+  return new OllamaEmbeddingService(baseUrl, model);
+}
+
+// ============================================================================
+// VECTOR UTILITIES
+// Direct implementation (mirrors InterBrain's VectorUtils)
+// ============================================================================
+
+export class VectorUtils {
+  static cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) {
+      throw new Error('Vectors must have the same length');
+    }
+
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+
+    const magnitude = Math.sqrt(normA) * Math.sqrt(normB);
+    return magnitude === 0 ? 0 : dotProduct / magnitude;
   }
 }
 
 /**
- * Standalone DreamNode Service - handles creation and management
+ * Multi-vault discovery - finds Obsidian vaults from config
+ * InterBrain assumes single vault from Obsidian context; we need multi-vault for CLI
+ */
+export function discoverObsidianVaults(): VaultInfo[] {
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const obsidianConfigPath = path.join(
+    homeDir,
+    'Library',
+    'Application Support',
+    'obsidian',
+    'obsidian.json'
+  );
+
+  try {
+    if (!fs.existsSync(obsidianConfigPath)) {
+      console.warn('Obsidian config not found at:', obsidianConfigPath);
+      return [];
+    }
+
+    const configContent = fs.readFileSync(obsidianConfigPath, 'utf-8');
+    const config = JSON.parse(configContent);
+
+    if (!config.vaults || typeof config.vaults !== 'object') {
+      console.warn('No vaults found in Obsidian config');
+      return [];
+    }
+
+    const vaults: VaultInfo[] = [];
+
+    for (const vaultId of Object.keys(config.vaults)) {
+      const vaultData = config.vaults[vaultId];
+      if (vaultData.path && typeof vaultData.path === 'string') {
+        if (fs.existsSync(vaultData.path)) {
+          vaults.push({
+            path: vaultData.path,
+            name: path.basename(vaultData.path)
+          });
+        }
+      }
+    }
+
+    return vaults;
+  } catch (error) {
+    console.error('Failed to discover Obsidian vaults:', error);
+    return [];
+  }
+}
+
+/**
+ * Discover all DreamNodes across all Obsidian vaults
+ * Uses InterBrain's discoverDreamNodes for each vault
+ */
+export async function discoverAllDreamNodes(): Promise<DreamNodeInfo[]> {
+  const vaults = discoverObsidianVaults();
+  const allDreamNodes: DreamNodeInfo[] = [];
+
+  for (const vault of vaults) {
+    const result = await discoverDreamNodes(vault.path);
+
+    for (const node of result.discovered) {
+      allDreamNodes.push({
+        uuid: node.udd.uuid,
+        title: node.udd.title,
+        type: node.udd.type,
+        path: node.dirPath,
+        vaultPath: vault.path,
+        radicleId: node.udd.radicleId,
+        submodules: node.udd.submodules || [],
+        supermodules: node.udd.supermodules || []
+      });
+    }
+  }
+
+  return allDreamNodes;
+}
+
+/**
+ * Find a DreamNode by UUID or title
+ */
+export async function findDreamNode(identifier: string): Promise<DreamNodeInfo | null> {
+  const allNodes = await discoverAllDreamNodes();
+
+  // Try exact UUID match first
+  const byUUID = allNodes.find(node => node.uuid === identifier);
+  if (byUUID) return byUUID;
+
+  // Try exact title match
+  const byTitle = allNodes.find(node => node.title === identifier);
+  if (byTitle) return byTitle;
+
+  // Try case-insensitive title match
+  const lowerIdentifier = identifier.toLowerCase();
+  const byTitleCI = allNodes.find(
+    node => node.title.toLowerCase() === lowerIdentifier
+  );
+  if (byTitleCI) return byTitleCI;
+
+  // Try partial title match
+  const byPartialTitle = allNodes.find(
+    node => node.title.toLowerCase().includes(lowerIdentifier)
+  );
+  if (byPartialTitle) return byPartialTitle;
+
+  return null;
+}
+
+/**
+ * Standalone DreamNode Service
+ * Wraps InterBrain's git-utils and UDDService for DreamNode operations
  */
 export class DreamNodeService {
   /**
    * Create a new DreamNode with git repository
+   * Uses InterBrain's initRepo and UDDService
    */
   static async createDreamNode(
     parentPath: string,
@@ -196,27 +441,29 @@ export class DreamNodeService {
     // Create directory
     fs.mkdirSync(nodePath, { recursive: true });
 
-    // Initialize git repository
-    const git: SimpleGit = simpleGit(nodePath);
-    await git.init();
+    // Initialize git repository using InterBrain's git-utils
+    await initRepo(nodePath);
 
     // Generate UUID
     const uuid = randomUUID();
 
-    // Create .udd file
-    UDDService.createUDD(nodePath, {
+    // Create .udd file using InterBrain's UDDService
+    const udd: UDDFile = {
       uuid,
       title: name,
-      type
-    });
+      type,
+      dreamTalk: '',
+      submodules: [],
+      supermodules: []
+    };
+    await UDDService.writeUDD(nodePath, udd);
 
     // Create README.md
     const readmeContent = `# ${name}\n\n`;
     fs.writeFileSync(path.join(nodePath, 'README.md'), readmeContent, 'utf-8');
 
-    // Initial commit
-    await git.add(['.udd', 'README.md']);
-    await git.commit('Initialize DreamNode');
+    // Initial commit using InterBrain's git-utils
+    await commitAllChanges(nodePath, 'Initialize DreamNode');
 
     return {
       uuid,
@@ -233,7 +480,8 @@ export class DreamNodeService {
    * Delete a DreamNode
    */
   static async deleteDreamNode(nodePath: string): Promise<void> {
-    if (!UDDService.uddExists(nodePath)) {
+    const uddExists = fs.existsSync(path.join(nodePath, '.udd'));
+    if (!uddExists) {
       throw new Error(`Not a DreamNode: ${nodePath}`);
     }
 
@@ -241,13 +489,13 @@ export class DreamNodeService {
   }
 
   /**
-   * List all DreamNodes
+   * List all DreamNodes with optional filtering
    */
-  static listDreamNodes(options?: {
+  static async listDreamNodes(options?: {
     typeFilter?: 'dream' | 'dreamer';
     namePattern?: string;
-  }): DreamNodeInfo[] {
-    let nodes = discoverAllDreamNodes();
+  }): Promise<DreamNodeInfo[]> {
+    let nodes = await discoverAllDreamNodes();
 
     if (options?.typeFilter) {
       nodes = nodes.filter(node => node.type === options.typeFilter);
@@ -266,29 +514,42 @@ export class DreamNodeService {
   /**
    * Get a specific DreamNode
    */
-  static getDreamNode(identifier: string): DreamNodeInfo | null {
+  static async getDreamNode(identifier: string): Promise<DreamNodeInfo | null> {
     return findDreamNode(identifier);
   }
 
   /**
-   * Update a DreamNode's metadata
+   * Update a DreamNode's metadata using InterBrain's UDDService
    */
-  static updateDreamNode(
+  static async updateDreamNode(
     identifier: string,
     updates: { title?: string; type?: 'dream' | 'dreamer' }
-  ): DreamNodeInfo | null {
-    const node = findDreamNode(identifier);
+  ): Promise<DreamNodeInfo | null> {
+    const node = await findDreamNode(identifier);
     if (!node) return null;
 
-    UDDService.updateUDD(node.path, updates);
+    // Read current UDD
+    const udd = await UDDService.readUDD(node.path);
+
+    // Apply updates
+    if (updates.title !== undefined) udd.title = updates.title;
+    if (updates.type !== undefined) udd.type = updates.type;
+
+    // Write back
+    await UDDService.writeUDD(node.path, udd);
 
     // Return updated info
-    return getDreamNodeFromPath(node.path);
+    return {
+      ...node,
+      title: udd.title,
+      type: udd.type
+    };
   }
 }
 
 /**
- * Standalone Submodule Service - handles git submodule operations
+ * Standalone Submodule Service
+ * Uses InterBrain's git-utils for git operations
  */
 export class SubmoduleService {
   /**
@@ -299,18 +560,16 @@ export class SubmoduleService {
     childPath: string,
     submoduleName?: string
   ): Promise<{ success: boolean; error?: string }> {
-    try {
-      const git: SimpleGit = simpleGit(parentPath);
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
 
-      // Verify both are git repos
-      const parentIsRepo = await git.checkIsRepo();
-      if (!parentIsRepo) {
+    try {
+      // Verify both are git repos using InterBrain's git-utils
+      if (!isGitRepo(parentPath)) {
         return { success: false, error: 'Parent is not a git repository' };
       }
-
-      const childGit: SimpleGit = simpleGit(childPath);
-      const childIsRepo = await childGit.checkIsRepo();
-      if (!childIsRepo) {
+      if (!isGitRepo(childPath)) {
         return { success: false, error: 'Child is not a git repository' };
       }
 
@@ -318,31 +577,31 @@ export class SubmoduleService {
       const name = submoduleName || path.basename(childPath);
 
       // Get child's radicle ID if available
-      const childUDD = UDDService.readUDD(childPath);
-      const parentUDD = UDDService.readUDD(parentPath);
+      const childUDD = await UDDService.readUDD(childPath);
+      const parentUDD = await UDDService.readUDD(parentPath);
 
-      // Add git submodule (using relative path for portability)
+      // Add git submodule using relative path
       const relativePath = path.relative(parentPath, childPath);
-      await git.submoduleAdd(relativePath, name);
+      await execAsync(`git submodule add --force "${relativePath}" "${name}"`, { cwd: parentPath });
 
-      // Update parent's .udd with child's radicleId (if available)
+      // Update parent's .udd with child's radicleId
       if (childUDD.radicleId) {
-        UDDService.addSubmodule(parentPath, childUDD.radicleId);
+        await UDDService.addSubmodule(parentPath, childUDD.radicleId);
       }
 
-      // Update child's .udd with parent's radicleId (if available)
+      // Update child's .udd with parent's radicleId
       if (parentUDD.radicleId) {
-        UDDService.addSupermoduleEntry(childPath, {
+        const { stdout } = await execAsync('git rev-parse HEAD', { cwd: parentPath });
+        await UDDService.addSupermoduleEntry(childPath, {
           radicleId: parentUDD.radicleId,
           title: parentUDD.title,
-          atCommit: (await git.revparse(['HEAD'])).trim(),
+          atCommit: stdout.trim(),
           addedAt: Date.now()
         });
       }
 
       // Commit the change
-      await git.add(['.gitmodules', name, '.udd']);
-      await git.commit(`Add submodule: ${name}`);
+      await commitAllChanges(parentPath, `Add submodule: ${name}`);
 
       return { success: true };
     } catch (error) {
@@ -358,14 +617,16 @@ export class SubmoduleService {
     parentPath: string,
     submoduleName: string
   ): Promise<{ success: boolean; error?: string }> {
-    try {
-      const git: SimpleGit = simpleGit(parentPath);
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
 
+    try {
       // Deinitialize submodule
-      await git.raw(['submodule', 'deinit', '-f', submoduleName]);
+      await execAsync(`git submodule deinit -f "${submoduleName}"`, { cwd: parentPath });
 
       // Remove from git
-      await git.rm(['-f', submoduleName]);
+      await execAsync(`git rm -f "${submoduleName}"`, { cwd: parentPath });
 
       // Remove directory if still exists
       const submodulePath = path.join(parentPath, submoduleName);
@@ -373,12 +634,8 @@ export class SubmoduleService {
         fs.rmSync(submodulePath, { recursive: true, force: true });
       }
 
-      // Update .udd to remove the relationship
-      // Note: We'd need the radicleId to properly remove, skipping for now
-
       // Commit the change
-      await git.add(['.gitmodules', '.udd']);
-      await git.commit(`Remove submodule: ${submoduleName}`);
+      await commitAllChanges(parentPath, `Remove submodule: ${submoduleName}`);
 
       return { success: true };
     } catch (error) {
@@ -391,126 +648,27 @@ export class SubmoduleService {
    * List submodules in a DreamNode
    */
   static async listSubmodules(parentPath: string): Promise<string[]> {
-    try {
-      const git: SimpleGit = simpleGit(parentPath);
-      const status = await git.subModule(['status']);
-
-      if (!status.trim()) {
-        return [];
-      }
-
-      // Parse submodule status output
-      const lines = status.split('\n').filter(line => line.trim());
-      const names: string[] = [];
-
-      for (const line of lines) {
-        // Format: " hash path (branch)" or "+hash path (branch)"
-        const match = line.match(/^[\s+-]\w+\s+(.+?)(?:\s+\(.+\))?$/);
-        if (match) {
-          names.push(path.basename(match[1]));
-        }
-      }
-
-      return names;
-    } catch (error) {
-      console.error('Failed to list submodules:', error);
-      return [];
-    }
-  }
-}
-
-/**
- * Standalone Embedding Service - uses Ollama for vector embeddings
- */
-export class EmbeddingService {
-  private baseUrl: string;
-  private model: string;
-
-  constructor(baseUrl: string = 'http://localhost:11434', model: string = 'nomic-embed-text') {
-    this.baseUrl = baseUrl.replace(/\/$/, '');
-    this.model = model;
-  }
-
-  /**
-   * Check if Ollama is available
-   */
-  async isAvailable(): Promise<boolean> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/tags`);
-      if (!response.ok) return false;
-
-      const data = await response.json() as { models: Array<{ name: string; model: string }> };
-      return data.models.some(m =>
-        m.name === this.model ||
-        m.model === this.model ||
-        m.name.startsWith(`${this.model}:`)
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Generate embedding for text
-   */
-  async generateEmbedding(text: string): Promise<number[]> {
-    const response = await fetch(`${this.baseUrl}/api/embeddings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: this.model,
-        prompt: text.trim()
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Ollama embedding failed: ${response.status}`);
-    }
-
-    const data = await response.json() as { embedding: number[] };
-    if (!data.embedding || !Array.isArray(data.embedding)) {
-      throw new Error('Invalid embedding response');
-    }
-
-    return data.embedding;
-  }
-
-  /**
-   * Calculate cosine similarity between two vectors
-   */
-  static cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length !== b.length) {
-      throw new Error('Vectors must have the same length');
-    }
-
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-
-    normA = Math.sqrt(normA);
-    normB = Math.sqrt(normB);
-
-    if (normA === 0 || normB === 0) return 0;
-
-    return dotProduct / (normA * normB);
+    return getSubmoduleNames(parentPath);
   }
 }
 
 /**
  * Standalone Semantic Search Service
+ * Uses InterBrain's OllamaEmbeddingService and VectorUtils
  */
 export class SemanticSearchService {
-  private embeddingService: EmbeddingService;
+  private embeddingService: OllamaEmbeddingService;
   private vectorCache: Map<string, VectorData> = new Map();
 
-  constructor(embeddingService?: EmbeddingService) {
-    this.embeddingService = embeddingService || new EmbeddingService();
+  constructor(embeddingService?: OllamaEmbeddingService) {
+    this.embeddingService = embeddingService || createOllamaEmbeddingService();
+  }
+
+  /**
+   * Check if embedding service is available
+   */
+  async isAvailable(): Promise<boolean> {
+    return this.embeddingService.isAvailable();
   }
 
   /**
@@ -526,8 +684,8 @@ export class SemanticSearchService {
       textContent = `${node.title}\n${readmeContent}`;
     }
 
-    // Generate embedding
-    const embedding = await this.embeddingService.generateEmbedding(textContent);
+    // Generate embedding using InterBrain's OllamaEmbeddingService
+    const embedding = await this.embeddingService.processLongText(textContent);
 
     const vectorData: VectorData = {
       nodeId: node.uuid,
@@ -549,7 +707,7 @@ export class SemanticSearchService {
    * Index all DreamNodes
    */
   async indexAllNodes(): Promise<{ indexed: number; errors: number }> {
-    const nodes = discoverAllDreamNodes();
+    const nodes = await discoverAllDreamNodes();
     let indexed = 0;
     let errors = 0;
 
@@ -568,6 +726,7 @@ export class SemanticSearchService {
 
   /**
    * Search for nodes by semantic similarity
+   * Uses InterBrain's VectorUtils.cosineSimilarity
    */
   async searchByText(
     query: string,
@@ -580,18 +739,18 @@ export class SemanticSearchService {
       await this.indexAllNodes();
     }
 
-    // Generate query embedding
-    const queryEmbedding = await this.embeddingService.generateEmbedding(query);
+    // Generate query embedding using InterBrain's service
+    const queryEmbedding = await this.embeddingService.processLongText(query);
 
-    // Calculate similarities
+    // Calculate similarities using InterBrain's VectorUtils
     const results: SearchResult[] = [];
-    const allNodes = discoverAllDreamNodes();
+    const allNodes = await discoverAllDreamNodes();
 
     for (const node of allNodes) {
       const vectorData = this.vectorCache.get(node.uuid);
       if (!vectorData) continue;
 
-      const score = EmbeddingService.cosineSimilarity(queryEmbedding, vectorData.embedding);
+      const score = VectorUtils.cosineSimilarity(queryEmbedding, vectorData.embedding);
 
       if (score >= threshold) {
         results.push({
@@ -616,7 +775,6 @@ export class SemanticSearchService {
 
     if (fs.existsSync(readmePath)) {
       const content = fs.readFileSync(readmePath, 'utf-8');
-      // Return first 150 characters
       const cleaned = content.replace(/^#.*\n/gm, '').trim();
       if (cleaned.length <= 150) return cleaned;
       return cleaned.substring(0, 147) + '...';

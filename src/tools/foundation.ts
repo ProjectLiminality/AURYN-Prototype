@@ -1,9 +1,9 @@
 /**
  * Foundation MCP Tools - CRUD operations for DreamNodes
+ * Uses InterBrain's services via standalone-adapter
  */
 
-import { DreamNodeService, UDDService } from '../services/standalone-adapter.js';
-import { discoverObsidianVaults } from '../services/vault-discovery.js';
+import { DreamNodeService, discoverObsidianVaults } from '../services/standalone-adapter.js';
 
 /**
  * Tool: list_dreamnodes
@@ -23,7 +23,7 @@ export async function listDreamnodes(args: {
   }>;
   count: number;
 }> {
-  const nodes = DreamNodeService.listDreamNodes({
+  const nodes = await DreamNodeService.listDreamNodes({
     typeFilter: args.type_filter,
     namePattern: args.name_pattern
   });
@@ -62,7 +62,7 @@ export async function getDreamnode(args: {
   };
   error?: string;
 }> {
-  const node = DreamNodeService.getDreamNode(args.identifier);
+  const node = await DreamNodeService.getDreamNode(args.identifier);
 
   if (!node) {
     return {
@@ -189,7 +189,7 @@ export async function updateDreamnode(args: {
       };
     }
 
-    const updated = DreamNodeService.updateDreamNode(args.identifier, updates);
+    const updated = await DreamNodeService.updateDreamNode(args.identifier, updates);
 
     if (!updated) {
       return {
@@ -235,7 +235,7 @@ export async function deleteDreamnode(args: {
   }
 
   try {
-    const node = DreamNodeService.getDreamNode(args.identifier);
+    const node = await DreamNodeService.getDreamNode(args.identifier);
     if (!node) {
       return {
         success: false,
