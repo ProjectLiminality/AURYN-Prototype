@@ -253,3 +253,12 @@ Add to `~/.claude/mcp.json`:
 - **InterBrain** - The core system (submodule dependency)
 - **DreamOS** - The larger vision this serves
 - **Project Liminality** - The philosophical framework
+## Etymology: "Do What You Will"
+
+In Michael Ende's *The Neverending Story*, AURYN bears "Tu was du willst" - "Do what you will." German has no lesser word than "will" - wanting and willing unified. The inscription invites using creative power inherited from the creator, obeying your own will which is one with the divine.
+## Stream Processing Architecture
+
+Invert the flow: deterministic semantic search FIRST (sliding window, low threshold, catch subtle mentions), then LLM filters false positives, then LLM routes precisely with full README context. Mechanistic sweep → intelligent pruning → surgical placement.
+## Known Issue: Template README Noise
+
+Most DreamNode READMEs contain boilerplate template text, causing false positives in semantic search. Solution: batch-identify template READMEs (they'll have near-perfect similarity to template text), then clear them to minimal state. READMEs should be genuine pointers - title, DreamTalk, and organic description only.

@@ -241,6 +241,180 @@ export async function checkOllamaStatus(): Promise<{
 }
 
 /**
+ * Tool: process_stream_of_consciousness
+ * Deterministic semantic chunking of stream-of-consciousness text
+ * Returns candidate DreamNodes for each chunk - LLM then filters false positives
+ */
+export async function processStreamOfConsciousness(args: {
+  text: string;
+  chunk_size?: number;  // words per chunk (default: 150)
+  chunk_overlap?: number;  // overlap in words (default: 30)
+  threshold?: number;  // similarity threshold (default: 0.35 - low to catch subtle mentions)
+  max_candidates_per_chunk?: number;  // max DreamNodes per chunk (default: 5)
+}): Promise<{
+  success: boolean;
+  chunks?: Array<{
+    index: number;
+    text: string;
+    word_count: number;
+    candidates: Array<{
+      uuid: string;
+      title: string;
+      type: 'dream' | 'dreamer';
+      score: number;
+      path: string;
+    }>;
+  }>;
+  unique_candidates?: Array<{
+    uuid: string;
+    title: string;
+    type: 'dream' | 'dreamer';
+    best_score: number;
+    matched_chunks: number[];
+    path: string;
+  }>;
+  stats?: {
+    total_chunks: number;
+    total_words: number;
+    unique_candidates_found: number;
+  };
+  error?: string;
+}> {
+  try {
+    const service = getSemanticSearchService();
+
+    // Check Ollama availability
+    const ollamaAvailable = await service.isAvailable();
+    if (!ollamaAvailable) {
+      return {
+        success: false,
+        error: 'Ollama not available. Make sure Ollama is running with the nomic-embed-text model.'
+      };
+    }
+
+    // Configuration with defaults
+    const chunkSize = args.chunk_size ?? 150;
+    const chunkOverlap = args.chunk_overlap ?? 30;
+    const threshold = args.threshold ?? 0.35;  // Low threshold to catch subtle mentions
+    const maxCandidatesPerChunk = args.max_candidates_per_chunk ?? 5;
+
+    // Tokenize into words
+    const words = args.text.split(/\s+/).filter(w => w.length > 0);
+    const totalWords = words.length;
+
+    // Create sliding window chunks
+    const chunks: Array<{ index: number; text: string; words: string[] }> = [];
+    let position = 0;
+    let chunkIndex = 0;
+
+    while (position < words.length) {
+      const chunkWords = words.slice(position, position + chunkSize);
+      chunks.push({
+        index: chunkIndex,
+        text: chunkWords.join(' '),
+        words: chunkWords
+      });
+
+      // Move position forward, accounting for overlap
+      position += (chunkSize - chunkOverlap);
+      chunkIndex++;
+
+      // Prevent infinite loop if overlap >= chunkSize
+      if (chunkSize <= chunkOverlap) {
+        position += 1;
+      }
+    }
+
+    // Track unique candidates across all chunks
+    const uniqueCandidates = new Map<string, {
+      uuid: string;
+      title: string;
+      type: 'dream' | 'dreamer';
+      best_score: number;
+      matched_chunks: number[];
+      path: string;
+    }>();
+
+    // Process each chunk
+    const processedChunks: Array<{
+      index: number;
+      text: string;
+      word_count: number;
+      candidates: Array<{
+        uuid: string;
+        title: string;
+        type: 'dream' | 'dreamer';
+        score: number;
+        path: string;
+      }>;
+    }> = [];
+
+    for (const chunk of chunks) {
+      // Search for this chunk
+      const results = await service.searchByText(chunk.text, {
+        maxResults: maxCandidatesPerChunk,
+        threshold: threshold
+      });
+
+      const candidates = results.map(r => ({
+        uuid: r.node.uuid,
+        title: r.node.title,
+        type: r.node.type,
+        score: Math.round(r.score * 1000) / 1000,
+        path: r.node.path
+      }));
+
+      // Track unique candidates
+      for (const candidate of candidates) {
+        const existing = uniqueCandidates.get(candidate.uuid);
+        if (existing) {
+          existing.matched_chunks.push(chunk.index);
+          if (candidate.score > existing.best_score) {
+            existing.best_score = candidate.score;
+          }
+        } else {
+          uniqueCandidates.set(candidate.uuid, {
+            uuid: candidate.uuid,
+            title: candidate.title,
+            type: candidate.type,
+            best_score: candidate.score,
+            matched_chunks: [chunk.index],
+            path: candidate.path
+          });
+        }
+      }
+
+      processedChunks.push({
+        index: chunk.index,
+        text: chunk.text,
+        word_count: chunk.words.length,
+        candidates
+      });
+    }
+
+    // Sort unique candidates by best score
+    const sortedUniqueCandidates = Array.from(uniqueCandidates.values())
+      .sort((a, b) => b.best_score - a.best_score);
+
+    return {
+      success: true,
+      chunks: processedChunks,
+      unique_candidates: sortedUniqueCandidates,
+      stats: {
+        total_chunks: chunks.length,
+        total_words: totalWords,
+        unique_candidates_found: sortedUniqueCandidates.length
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
+/**
  * Export tool definitions for MCP registration
  */
 export const semanticTools = {
@@ -315,5 +489,37 @@ export const semanticTools = {
       properties: {}
     },
     handler: checkOllamaStatus
+  },
+
+  process_stream_of_consciousness: {
+    name: 'process_stream_of_consciousness',
+    description: 'Process stream-of-consciousness text with sliding window semantic search. Returns candidate DreamNodes for each chunk. Use this BEFORE LLM analysis - deterministic semantic sweep first, then filter false positives with LLM intelligence.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        text: {
+          type: 'string',
+          description: 'The stream of consciousness text to process (transcript, monologue, etc.)'
+        },
+        chunk_size: {
+          type: 'number',
+          description: 'Words per chunk (default: 150). Smaller = more granular but slower.'
+        },
+        chunk_overlap: {
+          type: 'number',
+          description: 'Overlap between chunks in words (default: 30). Prevents missing context at boundaries.'
+        },
+        threshold: {
+          type: 'number',
+          description: 'Similarity threshold 0-1 (default: 0.35 - intentionally low to catch subtle mentions). Lower = more candidates, more false positives for LLM to filter.'
+        },
+        max_candidates_per_chunk: {
+          type: 'number',
+          description: 'Maximum candidate DreamNodes per chunk (default: 5)'
+        }
+      },
+      required: ['text']
+    },
+    handler: processStreamOfConsciousness
   }
 };
