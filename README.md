@@ -209,6 +209,7 @@ Add to `~/.claude/mcp.json`:
 | `add_submodule` | Import DreamNode as git submodule |
 | `remove_submodule` | Remove submodule relationship |
 | `list_submodules` | List submodules of a DreamNode |
+| `sync_context` | Regenerate .claude/submodule-context.md after importing submodules |
 | `read_readme` | Read README content |
 | `append_to_readme` | Append high-signal content |
 | `write_readme` | Write/overwrite README |

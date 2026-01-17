@@ -1,7 +1,7 @@
 ---
 name: dreamwalk
 description: Semantic context expansion agent for knowledge gardening. Analyzes input files for relevant DreamNodes using semantic search, validates true relevance, and imports them as submodules. The ONE blessed way to expand context - endomorphic import only.
-tools: mcp__auryn__process_stream_of_consciousness, mcp__auryn__get_dreamnode, mcp__auryn__add_submodule, mcp__auryn__list_submodules, Read, Bash
+tools: mcp__auryn__process_stream_of_consciousness, mcp__auryn__get_dreamnode, mcp__auryn__add_submodule, mcp__auryn__list_submodules, mcp__auryn__sync_context, Read, Bash
 model: sonnet
 permissionMode: default
 ---
@@ -73,7 +73,19 @@ Use: mcp__auryn__add_submodule
 With: parent_identifier = current context, child_identifier = relevant DreamNode UUID or title
 ```
 
-### Step 6: Report
+### Step 6: Sync Context
+
+After importing submodules, regenerate the context file:
+```
+Use: mcp__auryn__sync_context
+With: identifier = current DreamNode
+```
+
+This updates `.claude/submodule-context.md` with @imports for all submodule READMEs.
+
+**Note**: The user will need to start a new Claude Code chat or reload context to see the imported READMEs.
+
+### Step 7: Report
 
 Output a clear summary:
 - **Imported**: List of DreamNodes added as submodules with brief reason
