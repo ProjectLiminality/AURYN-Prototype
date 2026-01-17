@@ -100,57 +100,15 @@ The submodule relationship makes this dependency explicit and ensures AURYN alwa
 | `read_readme` | Get the README content for a DreamNode |
 | `append_to_readme` | Add validated, high-signal content (surgical, minimal) |
 
-## Two Context Management Patterns
+## Knowledge Gardening Principles
 
-### Pattern 1: Explicit Submodules
+AURYN embodies the principles defined in the **Software Gardening** submodule:
+- Two Context Patterns (explicit submodules vs semantic dreamwalk)
+- Conservative Signal Philosophy (default to NOT adding)
+- Stream Processing Pattern (deterministic sweep → LLM filter → surgical placement)
+- Endomorphic Context Retrieval (submodule import over exomorphic lookup)
 
-When you know the context you need:
-- Import DreamNode as submodule
-- README + CLAUDE.md + MCP tools automatically load
-- Deterministic, intentional, structural
-- The dependency is explicit in the git graph
-
-### Pattern 2: Semantic Dreamwalk
-
-When you're in liminal space, dreaming freely:
-- Conversation flows naturally
-- Semantic search continuously pulls in relevant DreamNodes
-- LLM validates true relevance (crossing a threshold)
-- Validated insights route to correct contexts as "memetic nutrients"
-- Emergent, fluid, exploratory
-
-Both patterns use the same underlying tools, just orchestrated differently.
-
-## The Conservative Signal Philosophy
-
-The system defaults to **NOT adding** content. This is crucial.
-
-### Why Conservation Matters
-
-- We live in the age of AI slop - easy generation leads to pollution
-- The DreamTalk symbol and name are sacred human interfaces
-- Knowledge self-organizes in the mind - not everything needs to be written
-- Hoarding is a fear response; gardening is trust in natural growth
-
-### Rules for Content Addition
-
-1. **Ambiguity means NO** - if unclear whether to add, don't add
-2. **Surgical precision** - one sentence, not paragraphs
-3. **Validate before write** - LLM confirms this is truly signal
-4. **Keep human interface clean** - README is curated, not dumped into
-
-### What Qualifies as Signal
-
-- Concrete insights: "Use function X instead of Y for this reason"
-- Structural decisions: "This DreamNode depends on that one"
-- Distilled wisdom: A sentence that captures hours of exploration
-
-### What Does NOT Qualify
-
-- Stream of consciousness exploration
-- Redundant reformulations
-- "Better safe than sorry" hoarding
-- Anything that could be re-derived from first principles
+See `Software Gardening/README.md` for the full discipline.
 
 ## Relationship to DreamOS
 
@@ -269,18 +227,11 @@ Add to `~/.claude/mcp.json`:
 
 In Michael Ende's *The Neverending Story*, AURYN bears "Tu was du willst" - "Do what you will." German has no lesser word than "will" - wanting and willing unified. The inscription invites using creative power inherited from the creator, obeying your own will which is one with the divine.
 
-## Stream Processing Architecture
+## Stream Processing Tool
 
-`process_stream_of_consciousness` inverts the typical flow:
-1. **Deterministic semantic sweep** - sliding window chunking, low threshold (0.35), catch subtle mentions
-2. **LLM filters false positives** - read candidate READMEs, validate true relevance
-3. **LLM routes precisely** - with full context, surgical placement of insights
-
-Accepts `file_path` parameter for token efficiency - tool reads transcript directly.
-
-## Meaningful vs Transient
-
-Like git history: meaningful actions become commits, transient actions are forgotten. AURYN applies the same principle: meaningful knowledge accumulates in DreamNode READMEs, transient chat exchanges disappear when the conversation closes. The breakthrough isn't the technology (glorified RAG) - it's the ergonomics that fit how minds actually work.
+`process_stream_of_consciousness` implements the Stream Processing Pattern from Software Gardening:
+- Sliding window chunking, low threshold (0.35)
+- Accepts `file_path` parameter for token efficiency
 
 ## Known Issues
 
