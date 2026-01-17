@@ -1,3 +1,6 @@
 [submodule "InterBrain"]
 	path = InterBrain
 	url = /Users/davidrug/RealDealVault/InterBrain
+[submodule "Software Gardening"]
+	path = Software Gardening
+	url = /Users/davidrug/RealDealVault/Software Gardening
