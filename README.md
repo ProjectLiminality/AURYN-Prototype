@@ -243,7 +243,7 @@ In Michael Ende's *The Neverending Story*, AURYN bears "Tu was du willst" - "Do 
 
 This enforces endomorphic-only interaction: never look at external context directly, always replicate into your universe first. Git records the relationship forever.
 
-See `.claude/commands/dreamwalk.md` for the full sub-agent definition.
+See `.claude/agents/dreamwalk.md` for the full agent definition.
 
 ## Known Issues
 
