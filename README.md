@@ -1,3 +1,4 @@
+
 # AURYN: InterBrain MCP Server
 
 AURYN is the MCP (Model Context Protocol) server for InterBrain - the universal interface that allows AI agents and external tools to interact with the DreamNode system.
@@ -13,6 +14,22 @@ AURYN is the **meta-catalyst** that unlocks everything else. It's not just anoth
 - External tools (Alfred, Raycast, scripts) to query and modify the dream space
 - The system to develop itself through agentic workflows
 - A unified interface that collapses the distinction between "application" and "agent"
+
+### Bidirectional: Read + Write
+
+AURYN operates in two directions simultaneously:
+- **Write**: Route insights to correct DreamNode contexts (knowledge gardening)
+- **Read**: Retrieve knowledge to answer questions, draft emails, surface relevant context
+
+This isn't two modes - it's one unified flow. The same semantic search that finds where to store knowledge also finds what knowledge to retrieve.
+
+### Personal Assistant Pattern
+
+Start the day by voicing thoughts: "I need to email this person about that project." AURYN surfaces the relevant DreamNode, loads context, drafts the email. The email is transient (doesn't persist), but the project context it drew from is persistent knowledge.
+
+### Shareability Principle
+
+**Content and context travel together.** If you share AURYN with someone, they inherit everything needed to recreate the experience - submodule dependencies, MCP tools, README context. This is why user-level Claude Code profiles are less attractive: they break the ontology where everything meaningful lives within DreamNodes.
 
 ### The Core Insight
 
@@ -248,23 +265,32 @@ Add to `~/.claude/mcp.json`:
 - Add more tools as needed (canvas operations, DreamTalk handling)
 - Explore HTTP transport for web integrations
 
+## Etymology: "Do What You Will"
+
+In Michael Ende's *The Neverending Story*, AURYN bears "Tu was du willst" - "Do what you will." German has no lesser word than "will" - wanting and willing unified. The inscription invites using creative power inherited from the creator, obeying your own will which is one with the divine.
+
+## Stream Processing Architecture
+
+`process_stream_of_consciousness` inverts the typical flow:
+1. **Deterministic semantic sweep** - sliding window chunking, low threshold (0.35), catch subtle mentions
+2. **LLM filters false positives** - read candidate READMEs, validate true relevance
+3. **LLM routes precisely** - with full context, surgical placement of insights
+
+Accepts `file_path` parameter for token efficiency - tool reads transcript directly.
+
+## Meaningful vs Transient
+
+Like git history: meaningful actions become commits, transient actions are forgotten. AURYN applies the same principle: meaningful knowledge accumulates in DreamNode READMEs, transient chat exchanges disappear when the conversation closes. The breakthrough isn't the technology (glorified RAG) - it's the ergonomics that fit how minds actually work.
+
+## Known Issues
+
+**Template README Noise**: Most DreamNode READMEs contain boilerplate, causing false positives. Solution: batch-identify via high similarity to template text, clear to minimal state.
+
+**Tool Minimalism**: Audit tools ruthlessly. `append_to_readme` constrains intelligence by forcing "tweet-threading" instead of holistic editing. Optimal: minimal tool set enabling maximum freedom. Read full README → intelligent edit beats append-only.
+
 ## Related DreamNodes
 
 - **InterBrain** - The core system (submodule dependency)
 - **DreamOS** - The larger vision this serves
+- **Software Gardening** - The development philosophy
 - **Project Liminality** - The philosophical framework
-## Etymology: "Do What You Will"
-
-In Michael Ende's *The Neverending Story*, AURYN bears "Tu was du willst" - "Do what you will." German has no lesser word than "will" - wanting and willing unified. The inscription invites using creative power inherited from the creator, obeying your own will which is one with the divine.
-## Stream Processing Architecture
-
-Invert the flow: deterministic semantic search FIRST (sliding window, low threshold, catch subtle mentions), then LLM filters false positives, then LLM routes precisely with full README context. Mechanistic sweep → intelligent pruning → surgical placement.
-## Known Issue: Template README Noise
-
-Most DreamNode READMEs contain boilerplate template text, causing false positives in semantic search. Solution: batch-identify template READMEs (they'll have near-perfect similarity to template text), then clear them to minimal state. READMEs should be genuine pointers - title, DreamTalk, and organic description only.
-## Efficiency: File Path Input
-
-Stream processing should accept file paths, not require text copying into context. Tool reads file directly - tokens spent only on results, not input duplication. Async batch processing: point to transcript file, results appear in DreamNodes without babysitting.
-## Tool Minimalism: Constraints Enable Freedom
-
-Audit tools ruthlessly - each constraint can limit intelligence. append_to_readme forces "tweet-threading" instead of holistic README editing with full context. Optimal: minimal tool set that enables maximum freedom, not constrains it. Read full README → intelligent edit beats append-only.
