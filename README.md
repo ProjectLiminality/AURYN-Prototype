@@ -233,6 +233,18 @@ In Michael Ende's *The Neverending Story*, AURYN bears "Tu was du willst" - "Do 
 - Sliding window chunking, low threshold (0.35)
 - Accepts `file_path` parameter for token efficiency
 
+## Dreamwalk: The Canonical Context Expansion
+
+`/dreamwalk <file>` is the ONE blessed way to expand context:
+
+1. Semantic sweep on input file
+2. LLM filters false positives by reading candidate READMEs
+3. Truly relevant DreamNodes imported as submodules
+
+This enforces endomorphic-only interaction: never look at external context directly, always replicate into your universe first. Git records the relationship forever.
+
+See `.claude/commands/dreamwalk.md` for the full sub-agent definition.
+
 ## Known Issues
 
 **Template README Noise**: Most DreamNode READMEs contain boilerplate, causing false positives. Solution: batch-identify via high similarity to template text, clear to minimal state.
