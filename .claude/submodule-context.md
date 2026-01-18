@@ -5,7 +5,30 @@ Do not edit manually - it will be overwritten.
 
 The following submodule READMEs are imported into context (recursive traversal):
 
-*No submodules with READMEs found.*
+## Gutsel
+
+@Gutsel/README.md
+
+## InterBrain
+
+@InterBrain/README.md
+
+## InterBrain Scalability
+
+@InterBrain Scalability/README.md
+
+## InterBrain Scalability/DreamTalk to Texture
+
+@InterBrain Scalability/DreamTalk to Texture/README.md
+
+## InterBrain Scalability/InterBrain
+
+@InterBrain Scalability/InterBrain/README.md
+
+## Software Gardening
+
+@Software Gardening/README.md
+
 
 ---
-*Last synced: 2026-01-18T13:37:15.720Z*
+*Last synced: 2026-01-18T13:47:06.479Z*

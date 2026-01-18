@@ -7,3 +7,6 @@
 [submodule "InterBrain Scalability"]
 	path = InterBrain Scalability
 	url = /Users/davidrug/RealDealVault/InterBrain Scalability
+[submodule "Gutsel"]
+	path = Gutsel
+	url = /Users/davidrug/RealDealVault/Gutsel
