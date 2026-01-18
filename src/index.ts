@@ -16,13 +16,15 @@ import { foundationTools } from './tools/foundation.js';
 import { submoduleTools } from './tools/submodule.js';
 import { contentTools } from './tools/content.js';
 import { semanticTools } from './tools/semantic.js';
+import { agentLoaderTools } from './tools/agent-loader.js';
 
 // Combine all tools
 const allTools = {
   ...foundationTools,
   ...submoduleTools,
   ...contentTools,
-  ...semanticTools
+  ...semanticTools,
+  ...agentLoaderTools
 };
 
 // Create MCP server
