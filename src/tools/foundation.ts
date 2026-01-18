@@ -9,11 +9,15 @@ import { DreamNodeService, discoverObsidianVaults } from '../services/standalone
 // Reason: Dumps all nodes, pollutes context. Use semantic search via context-provider agent instead.
 
 /**
- * Tool: get_dreamnode
- * Get full metadata and README for a DreamNode
+ * Tool: read_dreamnode
+ * Read full metadata and README for a DreamNode by UUID
+ *
+ * IMPORTANT: This tool requires a UUID, not a title.
+ * UUIDs are obtained from context-provider agent's semantic search.
+ * This ensures relevance is determined before reading.
  */
-export async function getDreamnode(args: {
-  identifier: string;
+export async function readDreamnode(args: {
+  uuid: string;
 }): Promise<{
   found: boolean;
   node?: {
@@ -29,12 +33,12 @@ export async function getDreamnode(args: {
   };
   error?: string;
 }> {
-  const node = await DreamNodeService.getDreamNode(args.identifier);
+  const node = await DreamNodeService.getDreamNode(args.uuid);
 
   if (!node) {
     return {
       found: false,
-      error: `DreamNode not found: ${args.identifier}`
+      error: `DreamNode not found with UUID: ${args.uuid}`
     };
   }
 
@@ -230,20 +234,20 @@ export async function deleteDreamnode(args: {
 export const foundationTools = {
   // list_dreamnodes REMOVED - use context-provider agent with semantic search
 
-  get_dreamnode: {
-    name: 'get_dreamnode',
-    description: 'Get full metadata and README content for a DreamNode by UUID or title',
+  read_dreamnode: {
+    name: 'read_dreamnode',
+    description: 'Read full metadata and README content for a DreamNode by UUID. UUIDs are obtained from context-provider agent semantic search - do not call this directly with titles.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        identifier: {
+        uuid: {
           type: 'string',
-          description: 'UUID or title of the DreamNode'
+          description: 'UUID of the DreamNode (obtained from context-provider semantic search)'
         }
       },
-      required: ['identifier']
+      required: ['uuid']
     },
-    handler: getDreamnode
+    handler: readDreamnode
   },
 
   create_dreamnode: {
