@@ -301,3 +301,7 @@ In Michael Ende's *The Neverending Story*, AURYN bears "Tu was du willst" - "Do 
 - **DreamOS** - The larger vision this serves
 - **Software Gardening** - The development philosophy
 - **Project Liminality** - The philosophical framework
+
+## Evolution Horizons
+
+**Path A** (Current): Claude Code CLI + plugins. **Path B**: Agent SDK for runtime agent loading. **Path C**: Fully open stack (LangGraph/CrewAI + any LLM + MCP). MCP is now Linux Foundation - the tool layer is already liberated. Investment in MCP architecture transfers across all paths.
