@@ -5,41 +5,8 @@
 
 import { DreamNodeService, discoverObsidianVaults } from '../services/standalone-adapter.js';
 
-/**
- * Tool: list_dreamnodes
- * List all DreamNodes with optional filtering
- */
-export async function listDreamnodes(args: {
-  type_filter?: 'dream' | 'dreamer';
-  name_pattern?: string;
-}): Promise<{
-  nodes: Array<{
-    uuid: string;
-    title: string;
-    type: 'dream' | 'dreamer';
-    path: string;
-    vaultPath: string;
-    radicleId?: string;
-  }>;
-  count: number;
-}> {
-  const nodes = await DreamNodeService.listDreamNodes({
-    typeFilter: args.type_filter,
-    namePattern: args.name_pattern
-  });
-
-  return {
-    nodes: nodes.map(node => ({
-      uuid: node.uuid,
-      title: node.title,
-      type: node.type,
-      path: node.path,
-      vaultPath: node.vaultPath,
-      radicleId: node.radicleId
-    })),
-    count: nodes.length
-  };
-}
+// list_dreamnodes REMOVED
+// Reason: Dumps all nodes, pollutes context. Use semantic search via context-provider agent instead.
 
 /**
  * Tool: get_dreamnode
@@ -261,25 +228,7 @@ export async function deleteDreamnode(args: {
  * Export tool definitions for MCP registration
  */
 export const foundationTools = {
-  list_dreamnodes: {
-    name: 'list_dreamnodes',
-    description: 'List all DreamNodes across configured Obsidian vaults with optional filtering',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        type_filter: {
-          type: 'string',
-          enum: ['dream', 'dreamer'],
-          description: 'Filter by DreamNode type'
-        },
-        name_pattern: {
-          type: 'string',
-          description: 'Filter by name pattern (case-insensitive substring match)'
-        }
-      }
-    },
-    handler: listDreamnodes
-  },
+  // list_dreamnodes REMOVED - use context-provider agent with semantic search
 
   get_dreamnode: {
     name: 'get_dreamnode',
