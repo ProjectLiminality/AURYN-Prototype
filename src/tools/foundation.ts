@@ -57,7 +57,7 @@ export async function getDreamnode(args: {
     vaultPath: string;
     radicleId?: string;
     submodules: string[];
-    supermodules: Array<string | { radicleId: string; title: string }>;
+    supermodules: Array<string | { uuid: string; title: string }>;
     readme?: string;
   };
   error?: string;
@@ -95,7 +95,7 @@ export async function getDreamnode(args: {
       radicleId: node.radicleId,
       submodules: node.submodules,
       supermodules: node.supermodules.map(s =>
-        typeof s === 'string' ? s : { radicleId: s.radicleId, title: s.title }
+        typeof s === 'string' ? s : { uuid: s.uuid, title: s.title }
       ),
       readme
     }

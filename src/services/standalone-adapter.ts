@@ -22,7 +22,7 @@ const execAsync = promisify(exec);
 // ============================================================================
 
 export interface SupermoduleEntry {
-  radicleId: string;
+  uuid: string;
   title: string;
   atCommit: string;
   addedAt: number;
@@ -112,10 +112,10 @@ export class UDDService {
     fs.writeFileSync(uddPath, JSON.stringify(udd, null, 2), 'utf-8');
   }
 
-  static async addSubmodule(dreamNodePath: string, radicleId: string): Promise<void> {
+  static async addSubmodule(dreamNodePath: string, childUuid: string): Promise<void> {
     const udd = await this.readUDD(dreamNodePath);
-    if (!udd.submodules.includes(radicleId)) {
-      udd.submodules.push(radicleId);
+    if (!udd.submodules.includes(childUuid)) {
+      udd.submodules.push(childUuid);
       await this.writeUDD(dreamNodePath, udd);
     }
   }
@@ -123,7 +123,7 @@ export class UDDService {
   static async addSupermoduleEntry(dreamNodePath: string, entry: SupermoduleEntry): Promise<void> {
     const udd = await this.readUDD(dreamNodePath);
     const exists = udd.supermodules.some(s =>
-      typeof s === 'object' && s.radicleId === entry.radicleId
+      typeof s === 'object' && s.uuid === entry.uuid
     );
     if (!exists) {
       udd.supermodules.push(entry);
@@ -585,7 +585,7 @@ export class SubmoduleService {
       // Get submodule name
       const name = submoduleName || path.basename(childPath);
 
-      // Get child's radicle ID if available
+      // Read UDD files for both parent and child
       const childUDD = await UDDService.readUDD(childPath);
       const parentUDD = await UDDService.readUDD(parentPath);
 
@@ -593,21 +593,17 @@ export class SubmoduleService {
       const relativePath = path.relative(parentPath, childPath);
       await execAsync(`git submodule add --force "${relativePath}" "${name}"`, { cwd: parentPath });
 
-      // Update parent's .udd with child's radicleId
-      if (childUDD.radicleId) {
-        await UDDService.addSubmodule(parentPath, childUDD.radicleId);
-      }
+      // Update parent's .udd with child's UUID (always - UUID is the universal identifier)
+      await UDDService.addSubmodule(parentPath, childUDD.uuid);
 
-      // Update child's .udd with parent's radicleId
-      if (parentUDD.radicleId) {
-        const { stdout } = await execAsync('git rev-parse HEAD', { cwd: parentPath });
-        await UDDService.addSupermoduleEntry(childPath, {
-          radicleId: parentUDD.radicleId,
-          title: parentUDD.title,
-          atCommit: stdout.trim(),
-          addedAt: Date.now()
-        });
-      }
+      // Update child's .udd with parent's UUID as supermodule
+      const { stdout } = await execAsync('git rev-parse HEAD', { cwd: parentPath });
+      await UDDService.addSupermoduleEntry(childPath, {
+        uuid: parentUDD.uuid,
+        title: parentUDD.title,
+        atCommit: stdout.trim(),
+        addedAt: Date.now()
+      });
 
       // Commit the change
       await commitAllChanges(parentPath, `Add submodule: ${name}`);

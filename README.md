@@ -175,6 +175,33 @@ AURYN demonstrates the pattern: a DreamNode that imports InterBrain as a submodu
 
 ## Technical Notes
 
+### DreamNode Identifier Hierarchy
+
+DreamNodes use a hierarchy of identifiers, each serving a different scope:
+
+| Identifier | Scope | Purpose |
+|------------|-------|---------|
+| **Radicle ID** | Global/Network | The canonical identifier for networked DreamNodes. Enables retrieval over Radicle's P2P network. Format: `rad:z...` |
+| **UUID** | Local | Immutable local identifier. Generated on creation, never changes even if title changes. Used for local lookups and `.udd` references. |
+| **Title** | Human | Mutable display name. Can change without breaking references. Used for human-readable display and fuzzy matching. |
+
+**Current State (Local-Only)**:
+- AURYN currently uses **UUID** as the primary identifier in `.udd` submodules/supermodules arrays
+- Title-based lookup is supported for convenience but UUID takes precedence
+- This works for local-only operation
+
+**Target State (Radicle Integration)**:
+- `.udd` submodules/supermodules arrays should use **Radicle IDs**
+- This enables the system to work both locally AND over the network
+- When receiving a DreamNode update with a new supermodule entry, you can fetch that DreamNode from the Radicle network using its Radicle ID
+- UUID remains useful for local caching/indexing but Radicle ID is the networked truth
+
+**Migration Path**:
+1. Integrate InterBrain's Radicle tooling into AURYN
+2. Ensure `create_dreamnode` initializes a Radicle repository and assigns Radicle ID
+3. Update `add_submodule` to store Radicle IDs (with UUID fallback for non-Radicle nodes)
+4. Supermodule entries should contain both Radicle ID and UUID for maximum flexibility
+
 ### InterBrain Services to Expose
 
 These existing InterBrain services can be wrapped as MCP tools:
