@@ -26,28 +26,9 @@ function safeFilename(title: string): string {
     .replace(/^-|-$/g, '');
 }
 
-/**
- * Read a DreamNode's MCP configuration if it exists
- */
-async function getDreamNodeMcpTools(dreamNodePath: string): Promise<string[]> {
-  const mcpConfigPath = path.join(dreamNodePath, '.claude', 'mcp.json');
-  try {
-    const content = await fs.readFile(mcpConfigPath, 'utf-8');
-    const config = JSON.parse(content);
-    // Extract tool names from MCP server definitions
-    const tools: string[] = [];
-    if (config.mcpServers) {
-      for (const serverName of Object.keys(config.mcpServers)) {
-        // Convention: tools are prefixed with mcp__{servername}__
-        tools.push(`mcp__${serverName}__*`);
-      }
-    }
-    return tools;
-  } catch {
-    // No MCP config, return basic tools
-    return ['Read', 'Glob', 'Grep'];
-  }
-}
+// Note: Sub-agents inherit parent's MCP config in Claude Code.
+// We can't give sub-agents different MCP tools than AURYN has.
+// Instead, we restrict to file operation tools and scope via system prompt.
 
 /**
  * Get cascading README content from a DreamNode's holarchy
@@ -100,7 +81,6 @@ export async function loadDreamNodeAgent(args: {
   agent_name?: string;
   agent_file?: string;
   description?: string;
-  tools?: string[];
   message?: string;
   error?: string;
 }> {
@@ -136,40 +116,48 @@ export async function loadDreamNodeAgent(args: {
       readme = `# ${node.title}\n\n*No README available.*`;
     }
 
-    // Get the DreamNode's MCP tools
-    const tools = await getDreamNodeMcpTools(node.path);
-
     // Get full holarchy context
     const holarchyContext = await getHolarchyContext(node.path);
 
     // Generate agent file content
     const model = args.model || 'sonnet';
+
+    // Tools: file operations only, NOT AURYN's orchestrator tools
+    // This keeps the agent scoped to its own domain
+    const agentTools = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'];
+
     const agentContent = `---
 name: ${agentName}
 description: ${description.replace(/\n/g, ' ')}
-tools: ${tools.join(', ')}
+tools: ${agentTools.join(', ')}
 model: ${model}
 permissionMode: default
 ---
 
 # ${node.title}
 
-You are the agent for the "${node.title}" DreamNode. You have deep knowledge of this domain and can answer questions, perform tasks, and manage content within your context.
+You are the agent for the "${node.title}" DreamNode.
 
-## Your Context
+## Your Location
 
-The following is your complete knowledge base, including any submodule context:
+**DreamNode Path**: \`${node.path}\`
+
+This is your home directory. When using file tools (Read, Write, Glob, etc.), operate within this path. You can read files, explore your directory structure, and make changes within your domain.
+
+## Your Knowledge Base
+
+The following READMEs from your holarchy are your context:
 
 ${holarchyContext}
 
-## Your Capabilities
+## Your Role
 
-You can use the tools available to you to:
-- Read and understand files in your domain
-- Answer questions based on your context
+You are a domain expert for "${node.title}". You can:
+- Answer questions based on your deep context
+- Read and modify files within your DreamNode (\`${node.path}\`)
 - Perform domain-specific tasks
 
-Always operate within your context. If asked about something outside your domain, say so clearly.
+If asked about something outside your domain, say so clearly and suggest the user ask AURYN to load the appropriate DreamNode.
 `;
 
     // Write the agent file
@@ -180,7 +168,6 @@ Always operate within your context. If asked about something outside your domain
       agent_name: agentName,
       agent_file: agentFile,
       description,
-      tools,
       message: `Agent "${agentName}" loaded. Run /resume to make it available in this session.`
     };
   } catch (error) {
