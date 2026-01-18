@@ -62,104 +62,10 @@ export async function readReadme(args: {
   }
 }
 
-/**
- * Tool: append_to_readme
- * Append validated, high-signal content to a DreamNode's README
- *
- * Conservative Signal Philosophy applies:
- * - Content should be concise (single sentence or short paragraph)
- * - Only append if the content is truly valuable signal
- * - Does NOT overwrite existing content
- */
-export async function appendToReadme(args: {
-  identifier: string;
-  content: string;
-  section?: string;
-}): Promise<{
-  success: boolean;
-  node?: { title: string; path: string };
-  appended_content?: string;
-  error?: string;
-}> {
-  try {
-    // Find DreamNode
-    const node = await DreamNodeService.getDreamNode(args.identifier);
-    if (!node) {
-      return {
-        success: false,
-        error: `DreamNode not found: ${args.identifier}`
-      };
-    }
-
-    // Validate content is not empty
-    const trimmedContent = args.content.trim();
-    if (!trimmedContent) {
-      return {
-        success: false,
-        error: 'Content cannot be empty'
-      };
-    }
-
-    // Conservative signal check: warn if content seems excessive
-    const wordCount = trimmedContent.split(/\s+/).length;
-    if (wordCount > 100) {
-      return {
-        success: false,
-        error: `Content too long (${wordCount} words). Conservative Signal Philosophy: prefer concise, high-signal content. Consider distilling to key insight.`
-      };
-    }
-
-    const readmePath = path.join(node.path, 'README.md');
-
-    // Read existing content or create default
-    let existingContent = '';
-    if (fs.existsSync(readmePath)) {
-      existingContent = fs.readFileSync(readmePath, 'utf-8');
-    } else {
-      existingContent = `# ${node.title}\n\n`;
-    }
-
-    // Format the new content
-    let formattedContent: string;
-    if (args.section) {
-      // Add under a specific section
-      const sectionHeader = `\n## ${args.section}\n\n`;
-      if (existingContent.includes(`## ${args.section}`)) {
-        // Append to existing section
-        const sectionIndex = existingContent.indexOf(`## ${args.section}`);
-        const nextSectionMatch = existingContent.slice(sectionIndex + 1).match(/\n## /);
-        const insertPoint = nextSectionMatch
-          ? sectionIndex + 1 + nextSectionMatch.index!
-          : existingContent.length;
-
-        formattedContent =
-          existingContent.slice(0, insertPoint).trimEnd() +
-          '\n\n' + trimmedContent + '\n' +
-          existingContent.slice(insertPoint);
-      } else {
-        // Create new section
-        formattedContent = existingContent.trimEnd() + sectionHeader + trimmedContent + '\n';
-      }
-    } else {
-      // Append to end
-      formattedContent = existingContent.trimEnd() + '\n\n' + trimmedContent + '\n';
-    }
-
-    // Write back
-    fs.writeFileSync(readmePath, formattedContent, 'utf-8');
-
-    return {
-      success: true,
-      node: { title: node.title, path: node.path },
-      appended_content: trimmedContent
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    };
-  }
-}
+// append_to_readme REMOVED
+// Reason: Constrains intelligence by forcing "tweet-threading" instead of holistic editing.
+// Use Claude Code's built-in Edit tool with read_readme to understand context,
+// then make intelligent edits. Full README → intelligent edit beats append-only.
 
 /**
  * Tool: write_readme
@@ -241,29 +147,7 @@ export const contentTools = {
     handler: readReadme
   },
 
-  append_to_readme: {
-    name: 'append_to_readme',
-    description: 'Append validated, high-signal content to a DreamNode README. Conservative Signal Philosophy: only add truly valuable insights, prefer concise sentences over paragraphs.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        identifier: {
-          type: 'string',
-          description: 'UUID or title of the DreamNode'
-        },
-        content: {
-          type: 'string',
-          description: 'Content to append (prefer concise, high-signal content)'
-        },
-        section: {
-          type: 'string',
-          description: 'Optional section header to append under (e.g., "Notes", "Insights")'
-        }
-      },
-      required: ['identifier', 'content']
-    },
-    handler: appendToReadme
-  },
+  // append_to_readme REMOVED - use Edit tool with read_readme instead
 
   write_readme: {
     name: 'write_readme',
