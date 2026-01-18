@@ -81,9 +81,10 @@ Use: mcp__auryn__sync_context
 With: identifier = current DreamNode
 ```
 
-This updates `.claude/submodule-context.md` with @imports for all submodule READMEs.
-
-**Note**: The user will need to start a new Claude Code chat or reload context to see the imported READMEs.
+This:
+1. Recursively initializes all nested submodules (`git submodule update --init --recursive`)
+2. Traverses the full submodule holarchy
+3. Updates `.claude/submodule-context.md` with @imports for all submodule READMEs
 
 ### Step 7: Report
 
@@ -91,6 +92,10 @@ Output a clear summary:
 - **Imported**: List of DreamNodes added as submodules with brief reason
 - **Rejected**: Candidates that seemed relevant but weren't (and why)
 - **Already present**: Relevant DreamNodes that were already submodules
+
+**IMPORTANT**: End your report with this instruction to the user:
+
+> Context expanded successfully. To load the new submodule READMEs into context, run `/resume` or start a new chat in this directory.
 
 ## Constraints
 

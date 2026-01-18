@@ -1,0 +1,15 @@
+#!/bin/bash
+# Git hook: post-checkout
+# Automatically sync submodule context when switching branches or checking out commits
+#
+# This ensures .claude/submodule-context.md stays in sync with submodule state.
+
+# Get the repo root (where this hook is installed)
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Only run if submodules might have changed (branch switch or file checkout)
+# $3 is 1 for branch checkout, 0 for file checkout
+if [ "$3" = "1" ]; then
+    echo "Post-checkout: Syncing submodule context..." >&2
+    "$REPO_ROOT/scripts/sync-submodule-context.sh" "$REPO_ROOT"
+fi

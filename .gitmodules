@@ -4,3 +4,6 @@
 [submodule "Software Gardening"]
 	path = Software Gardening
 	url = /Users/davidrug/RealDealVault/Software Gardening
+[submodule "InterBrain Scalability"]
+	path = InterBrain Scalability
+	url = /Users/davidrug/RealDealVault/InterBrain Scalability
