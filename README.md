@@ -38,6 +38,47 @@ MCP is just an API formatted for AI agents. By building AURYN as the canonical i
 - Unify human and AI interaction (same tools, different invoker)
 - Enable the "liminal dreamwalk" - free-flowing ideation that auto-routes to correct contexts
 
+## AURYN as Meta-Agent
+
+AURYN is not just an MCP server - it's the **meta-agent** that orchestrates all other agents through MCP tooling. When Claude Code operates within AURYN's context, it gains the ability to:
+
+- **Create and manage DreamNodes** (ideas, projects, people)
+- **Expand context via dreamwalk** (semantic search → filter → submodule import)
+- **Garden knowledge** (route insights to correct READMEs)
+- **Compose capabilities** (import DreamNodes as submodules to inherit their tools/context)
+
+### README as Universal Memory
+
+Every DreamNode's README.md is its canonical memory - readable by any agent, any tool, any human. This is intentional:
+- **Agent-agnostic**: Works with Claude, GPT, local models, or future AI
+- **Human-readable**: No special format, just markdown
+- **Git-versioned**: Full history, branching, merging
+- **Composable**: Submodule imports cascade README context
+
+CLAUDE.md exists only as a thin bootstrap that @imports README.md and submodule context. All knowledge lives in README.
+
+### Agents
+
+Available in `.claude/agents/`:
+
+| Agent | Purpose |
+|-------|---------|
+| `dreamwalk` | Semantic context expansion - the ONE blessed way to expand context |
+
+### Dreamwalk: Canonical Context Expansion
+
+`/dreamwalk <file>` is the ONE blessed way to expand context:
+
+1. Semantic sweep on input file
+2. LLM filters false positives by reading candidate READMEs
+3. Truly relevant DreamNodes imported as submodules
+4. `sync_context` regenerates .claude/submodule-context.md
+5. Reload chat to see new context
+
+This enforces endomorphic-only interaction: never look at external context directly, always replicate into your universe first. Git records the relationship forever.
+
+See `.claude/agents/dreamwalk.md` for the full agent definition.
+
 ## Architecture
 
 AURYN is a DreamNode that has InterBrain as a git submodule, importing and using InterBrain's data layer services directly.
@@ -73,7 +114,7 @@ This is a **functional dependency** - AURYN imports and uses InterBrain's code:
 
 The submodule relationship makes this dependency explicit and ensures AURYN always has access to the correct InterBrain version.
 
-## Essential MCP Tools
+## MCP Tools
 
 ### Foundation Layer (CRUD + Structure)
 
@@ -83,15 +124,26 @@ The submodule relationship makes this dependency explicit and ensures AURYN alwa
 | `get_dreamnode` | Get metadata, readme, relationships for a DreamNode by UUID or name |
 | `create_dreamnode` | Create new DreamNode with proper .udd, git init, DreamTalk placeholder |
 | `update_dreamnode` | Update metadata (name, type, description) |
+| `delete_dreamnode` | Delete a DreamNode (requires confirmation) |
+
+### Relationship Layer (Submodule = Context)
+
+| Tool | Description |
+|------|-------------|
 | `add_submodule` | Import another DreamNode as submodule (the canonical way) |
 | `remove_submodule` | Remove submodule relationship |
+| `list_submodules` | List submodules of a DreamNode |
+| `sync_context` | Regenerate .claude/submodule-context.md after importing submodules |
 
 ### Semantic Layer (The Magic)
 
 | Tool | Description |
 |------|-------------|
 | `semantic_search` | Query by meaning, return ranked DreamNodes with semantic distances |
-| `get_context_for_conversation` | Given conversation text, return relevant DreamNodes (the "dreamwalk" feature) |
+| `get_context_for_conversation` | Given conversation text, return relevant DreamNodes |
+| `process_stream_of_consciousness` | Sliding window semantic sweep on text/file |
+| `index_dreamnodes` | Index all DreamNodes for semantic search |
+| `check_ollama_status` | Verify Ollama embedding service is available |
 
 ### Content Layer (Conservative by Design)
 
@@ -99,6 +151,7 @@ The submodule relationship makes this dependency explicit and ensures AURYN alwa
 |------|-------------|
 | `read_readme` | Get the README content for a DreamNode |
 | `append_to_readme` | Add validated, high-signal content (surgical, minimal) |
+| `write_readme` | Write/overwrite README (requires confirmation) |
 
 ## Knowledge Gardening Principles
 
@@ -197,26 +250,7 @@ Add to `~/.claude/mcp.json`:
 }
 ```
 
-### Available Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_dreamnodes` | List all DreamNodes with optional type/name filters |
-| `get_dreamnode` | Get full metadata and README for a DreamNode |
-| `create_dreamnode` | Create new DreamNode with git initialization |
-| `update_dreamnode` | Update metadata (title, type) |
-| `delete_dreamnode` | Delete a DreamNode (requires confirmation) |
-| `add_submodule` | Import DreamNode as git submodule |
-| `remove_submodule` | Remove submodule relationship |
-| `list_submodules` | List submodules of a DreamNode |
-| `sync_context` | Regenerate .claude/submodule-context.md after importing submodules |
-| `read_readme` | Read README content |
-| `append_to_readme` | Append high-signal content |
-| `write_readme` | Write/overwrite README |
-| `semantic_search` | Search by semantic similarity |
-| `get_context_for_conversation` | Find relevant DreamNodes for ideation |
-| `index_dreamnodes` | Index all DreamNodes for search |
-| `check_ollama_status` | Verify Ollama is available |
+See [MCP Tools](#mcp-tools) for the complete tool reference.
 
 ## Next Steps
 
@@ -227,24 +261,6 @@ Add to `~/.claude/mcp.json`:
 ## Etymology: "Do What You Will"
 
 In Michael Ende's *The Neverending Story*, AURYN bears "Tu was du willst" - "Do what you will." German has no lesser word than "will" - wanting and willing unified. The inscription invites using creative power inherited from the creator, obeying your own will which is one with the divine.
-
-## Stream Processing Tool
-
-`process_stream_of_consciousness` implements the Stream Processing Pattern from Software Gardening:
-- Sliding window chunking, low threshold (0.35)
-- Accepts `file_path` parameter for token efficiency
-
-## Dreamwalk: The Canonical Context Expansion
-
-`/dreamwalk <file>` is the ONE blessed way to expand context:
-
-1. Semantic sweep on input file
-2. LLM filters false positives by reading candidate READMEs
-3. Truly relevant DreamNodes imported as submodules
-
-This enforces endomorphic-only interaction: never look at external context directly, always replicate into your universe first. Git records the relationship forever.
-
-See `.claude/agents/dreamwalk.md` for the full agent definition.
 
 ## Known Issues
 

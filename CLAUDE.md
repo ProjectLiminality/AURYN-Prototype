@@ -1,19 +1,7 @@
-# AURYN - Claude Code Context
+# AURYN - Claude Code Bootstrap
 
-AURYN is the MCP server for InterBrain. See README.md for full documentation.
+This file bootstraps Claude Code context. All knowledge lives in README.md.
 
-## Submodule Context
-
-The following imports pull in context from all submodules:
+@README.md
 
 @.claude/submodule-context.md
-
-## Agents
-
-Available agents in `.claude/agents/`:
-
-- **dreamwalk**: Semantic context expansion - the ONE blessed way to expand context via endomorphic import
-
-## Development Notes
-
-After importing new submodules, run `sync_context` MCP tool to regenerate submodule-context.md, then reload Claude Code context.
