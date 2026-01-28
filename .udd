@@ -4,6 +4,8 @@
   "type": "dream",
   "dreamTalk": "AURYN.jpg",
   "radicleId": "rad:z4GJJ2Z8FZrz5Dhot6f9HZHFLH215",
-  "submodules": [],
+  "submodules": [
+    "rad:zJqVpsnnegqWgqY2sshQYnq8CkBR"
+  ],
   "supermodules": []
 }
