@@ -17,14 +17,28 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 
 // ============================================================================
+// DEFAULT CONFIGURATION
+// ============================================================================
+
+/**
+ * Default vault path for DreamNode creation
+ * RealDealVault is the primary active vault
+ */
+export const DEFAULT_VAULT_PATH = '/Users/davidrug/RealDealVault';
+
+// ============================================================================
 // LOCAL TYPE DEFINITIONS
 // Mirrors InterBrain types for standalone use
 // ============================================================================
 
 export interface SupermoduleEntry {
-  uuid: string;
+  /** Radicle ID of the parent DreamNode */
+  radicleId: string;
+  /** Display title of the parent DreamNode */
   title: string;
+  /** Commit hash in the parent repo when this was added as submodule */
   atCommit: string;
+  /** Timestamp when this relationship was recorded */
   addedAt: number;
 }
 
@@ -123,7 +137,7 @@ export class UDDService {
   static async addSupermoduleEntry(dreamNodePath: string, entry: SupermoduleEntry): Promise<void> {
     const udd = await this.readUDD(dreamNodePath);
     const exists = udd.supermodules.some(s =>
-      typeof s === 'object' && s.uuid === entry.uuid
+      typeof s === 'object' && 'radicleId' in s && s.radicleId === entry.radicleId
     );
     if (!exists) {
       udd.supermodules.push(entry);
@@ -148,6 +162,42 @@ export function isGitRepo(dirPath: string): boolean {
 export async function commitAllChanges(dirPath: string, message: string): Promise<void> {
   await execAsync('git add -A', { cwd: dirPath });
   await execAsync(`git commit -m "${message.replace(/"/g, '\\"')}"`, { cwd: dirPath });
+}
+
+/**
+ * Initialize Radicle for a git repository
+ * Returns the Radicle ID (RID) on success, null on failure
+ */
+export async function initRadicle(dirPath: string, name: string, description?: string): Promise<string | null> {
+  try {
+    // Check if rad CLI is available
+    await execAsync('which rad');
+
+    // Initialize Radicle repository
+    // --private flag ensures it's not immediately public
+    // --default-branch main is required (Radicle doesn't auto-detect)
+    // Use RAD_PASSPHRASE env var to avoid interactive prompt
+    const descArg = description ? `--description "${description.replace(/"/g, '\\"')}"` : '';
+    const { stdout } = await execAsync(
+      `RAD_PASSPHRASE="" rad init --name "${name.replace(/"/g, '\\"')}" ${descArg} --private --default-branch main`,
+      { cwd: dirPath }
+    );
+
+    // Extract RID from output (format: "rad:z...")
+    const ridMatch = stdout.match(/rad:[a-zA-Z0-9]+/);
+    if (ridMatch) {
+      return ridMatch[0];
+    }
+
+    // If no RID in output, try to get it from rad inspect
+    const { stdout: inspectOut } = await execAsync('rad inspect', { cwd: dirPath });
+    const inspectMatch = inspectOut.match(/rad:[a-zA-Z0-9]+/);
+    return inspectMatch ? inspectMatch[0] : null;
+  } catch (error) {
+    // Radicle not available or init failed - non-fatal
+    console.error('Radicle init failed (non-fatal):', error);
+    return null;
+  }
 }
 
 export function getSubmoduleNames(dirPath: string): string[] {
@@ -435,10 +485,33 @@ export async function findDreamNode(identifier: string): Promise<DreamNodeInfo |
  * Standalone DreamNode Service
  * Wraps InterBrain's git-utils and UDDService for DreamNode operations
  */
+/**
+ * Path to DreamNode template (relative to AURYN)
+ * Template contains: udd, README.md, LICENSE, .gitattributes, hooks/
+ */
+const DREAMNODE_TEMPLATE_PATH = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  '..',
+  '..',
+  'InterBrain',
+  'src',
+  'features',
+  'dreamnode',
+  'DreamNode-template'
+);
+
 export class DreamNodeService {
   /**
-   * Create a new DreamNode with git repository
-   * Uses InterBrain's initRepo and UDDService
+   * Create a new DreamNode with git repository and Radicle initialization
+   * Uses the InterBrain DreamNode-template for proper initialization
+   *
+   * Process:
+   * 1. Create directory and initialize git with template
+   * 2. Replace placeholders in template files
+   * 3. Move template files from .git/ to working directory
+   * 4. Initial commit
+   * 5. Initialize Radicle and update .udd with radicleId
+   * 6. Commit the Radicle ID update
    */
   static async createDreamNode(
     parentPath: string,
@@ -446,42 +519,93 @@ export class DreamNodeService {
     type: 'dream' | 'dreamer'
   ): Promise<DreamNodeInfo> {
     const nodePath = path.join(parentPath, name);
+    const uuid = randomUUID();
 
     // Create directory
     fs.mkdirSync(nodePath, { recursive: true });
 
-    // Initialize git repository using InterBrain's git-utils
-    await initRepo(nodePath);
+    // Initialize git repository with template
+    await execAsync(`git init --template="${DREAMNODE_TEMPLATE_PATH}" "${nodePath}"`);
 
-    // Generate UUID
-    const uuid = randomUUID();
+    // Make hooks executable
+    const hooksDir = path.join(nodePath, '.git', 'hooks');
+    if (fs.existsSync(path.join(hooksDir, 'pre-commit'))) {
+      await execAsync(`chmod +x "${path.join(hooksDir, 'pre-commit')}"`);
+    }
+    if (fs.existsSync(path.join(hooksDir, 'post-commit'))) {
+      await execAsync(`chmod +x "${path.join(hooksDir, 'post-commit')}"`);
+    }
 
-    // Create .udd file using InterBrain's UDDService
-    const udd: UDDFile = {
-      uuid,
-      title: name,
-      type,
-      dreamTalk: '',
-      submodules: [],
-      supermodules: []
-    };
-    await UDDService.writeUDD(nodePath, udd);
+    // Replace placeholders in template files (still in .git/ directory)
+    const gitDir = path.join(nodePath, '.git');
 
-    // Create README.md
-    const readmeContent = `# ${name}\n\n`;
-    fs.writeFileSync(path.join(nodePath, 'README.md'), readmeContent, 'utf-8');
+    // Replace in udd file
+    const uddSource = path.join(gitDir, 'udd');
+    if (fs.existsSync(uddSource)) {
+      let uddContent = fs.readFileSync(uddSource, 'utf-8');
+      uddContent = uddContent
+        .replace('TEMPLATE_UUID_PLACEHOLDER', uuid)
+        .replace('TEMPLATE_TITLE_PLACEHOLDER', name)
+        .replace('"type": "dream"', `"type": "${type}"`)
+        .replace('TEMPLATE_DREAMTALK_PLACEHOLDER', '')
+        .replace('TEMPLATE_RADICLE_ID_PLACEHOLDER', '');
+      fs.writeFileSync(uddSource, uddContent);
+    }
 
-    // Initial commit using InterBrain's git-utils
-    await commitAllChanges(nodePath, 'Initialize DreamNode');
+    // Replace in README.md
+    const readmeSource = path.join(gitDir, 'README.md');
+    if (fs.existsSync(readmeSource)) {
+      let readmeContent = fs.readFileSync(readmeSource, 'utf-8');
+      readmeContent = readmeContent.replace('{{title}}', name);
+      fs.writeFileSync(readmeSource, readmeContent);
+    }
+
+    // Move template files from .git/ to working directory
+    // .udd
+    const uddDest = path.join(nodePath, '.udd');
+    if (fs.existsSync(uddSource)) {
+      fs.renameSync(uddSource, uddDest);
+    }
+
+    // README.md
+    const readmeDest = path.join(nodePath, 'README.md');
+    if (fs.existsSync(readmeSource)) {
+      fs.renameSync(readmeSource, readmeDest);
+    }
+
+    // LICENSE
+    const licenseSource = path.join(gitDir, 'LICENSE');
+    const licenseDest = path.join(nodePath, 'LICENSE');
+    if (fs.existsSync(licenseSource)) {
+      fs.renameSync(licenseSource, licenseDest);
+    }
+
+    // Initial commit
+    await commitAllChanges(nodePath, `Initialize DreamNode: ${name}`);
+
+    // Initialize Radicle (after initial commit exists)
+    const radicleId = await initRadicle(nodePath, name, `DreamNode: ${name}`);
+
+    // Update .udd with radicleId if available
+    if (radicleId) {
+      const udd = await UDDService.readUDD(nodePath);
+      udd.radicleId = radicleId;
+      await UDDService.writeUDD(nodePath, udd);
+      await commitAllChanges(nodePath, 'Add Radicle ID to DreamNode');
+    }
+
+    // Read final UDD to return accurate data
+    const finalUdd = await UDDService.readUDD(nodePath);
 
     return {
-      uuid,
-      title: name,
-      type,
+      uuid: finalUdd.uuid,
+      title: finalUdd.title,
+      type: finalUdd.type,
       path: nodePath,
       vaultPath: parentPath,
-      submodules: [],
-      supermodules: []
+      radicleId: finalUdd.radicleId,
+      submodules: finalUdd.submodules || [],
+      supermodules: finalUdd.supermodules || []
     };
   }
 
@@ -559,10 +683,15 @@ export class DreamNodeService {
 /**
  * Standalone Submodule Service
  * Uses InterBrain's git-utils for git operations
+ *
+ * Relationship tracking uses Radicle IDs (matching InterBrain's submodule-manager-service):
+ * - Parent's .udd.submodules[] stores child's Radicle ID
+ * - Child's .udd.supermodules[] stores parent's Radicle ID with metadata
  */
 export class SubmoduleService {
   /**
    * Add a DreamNode as a git submodule
+   * Updates bidirectional relationships using Radicle IDs
    */
   static async addSubmodule(
     parentPath: string,
@@ -574,7 +703,7 @@ export class SubmoduleService {
     const execAsync = promisify(exec);
 
     try {
-      // Verify both are git repos using InterBrain's git-utils
+      // Verify both are git repos
       if (!isGitRepo(parentPath)) {
         return { success: false, error: 'Parent is not a git repository' };
       }
@@ -589,17 +718,25 @@ export class SubmoduleService {
       const childUDD = await UDDService.readUDD(childPath);
       const parentUDD = await UDDService.readUDD(parentPath);
 
-      // Add git submodule using relative path
-      const relativePath = path.relative(parentPath, childPath);
-      await execAsync(`git submodule add --force "${relativePath}" "${name}"`, { cwd: parentPath });
+      // Verify both have Radicle IDs (required for proper relationship tracking)
+      if (!childUDD.radicleId) {
+        return { success: false, error: `Child DreamNode "${childUDD.title}" has no Radicle ID. Run 'rad init' first.` };
+      }
+      if (!parentUDD.radicleId) {
+        return { success: false, error: `Parent DreamNode "${parentUDD.title}" has no Radicle ID. Run 'rad init' first.` };
+      }
 
-      // Update parent's .udd with child's UUID (always - UUID is the universal identifier)
-      await UDDService.addSubmodule(parentPath, childUDD.uuid);
+      // Add git submodule using absolute path (relative paths can conflict with Radicle remote helper)
+      // The absolute path works for local submodules and avoids rad:// URL interpretation
+      await execAsync(`git submodule add --force "${childPath}" "${name}"`, { cwd: parentPath });
 
-      // Update child's .udd with parent's UUID as supermodule
+      // Update parent's .udd with child's Radicle ID (matches InterBrain's submodule-manager-service)
+      await UDDService.addSubmodule(parentPath, childUDD.radicleId);
+
+      // Update child's .udd with parent's Radicle ID as supermodule
       const { stdout } = await execAsync('git rev-parse HEAD', { cwd: parentPath });
       await UDDService.addSupermoduleEntry(childPath, {
-        uuid: parentUDD.uuid,
+        radicleId: parentUDD.radicleId,
         title: parentUDD.title,
         atCommit: stdout.trim(),
         addedAt: Date.now()

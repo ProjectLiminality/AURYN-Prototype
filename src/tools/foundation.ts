@@ -3,7 +3,7 @@
  * Uses InterBrain's services via standalone-adapter
  */
 
-import { DreamNodeService, discoverObsidianVaults } from '../services/standalone-adapter.js';
+import { DreamNodeService, DEFAULT_VAULT_PATH } from '../services/standalone-adapter.js';
 
 // list_dreamnodes REMOVED
 // Reason: Dumps all nodes, pollutes context. Use semantic search via context-provider agent instead.
@@ -28,7 +28,7 @@ export async function readDreamnode(args: {
     vaultPath: string;
     radicleId?: string;
     submodules: string[];
-    supermodules: Array<string | { uuid: string; title: string }>;
+    supermodules: Array<string | { radicleId: string; title: string }>;
     readme?: string;
   };
   error?: string;
@@ -66,7 +66,7 @@ export async function readDreamnode(args: {
       radicleId: node.radicleId,
       submodules: node.submodules,
       supermodules: node.supermodules.map(s =>
-        typeof s === 'string' ? s : { uuid: s.uuid, title: s.title }
+        typeof s === 'string' ? s : { radicleId: s.radicleId, title: s.title }
       ),
       readme
     }
@@ -75,7 +75,7 @@ export async function readDreamnode(args: {
 
 /**
  * Tool: create_dreamnode
- * Create a new DreamNode with git initialization
+ * Create a new DreamNode with git and Radicle initialization
  */
 export async function createDreamnode(args: {
   name: string;
@@ -88,24 +88,13 @@ export async function createDreamnode(args: {
     title: string;
     type: 'dream' | 'dreamer';
     path: string;
+    radicleId?: string;
   };
   error?: string;
 }> {
   try {
-    // Determine parent path
-    let parentPath = args.vault_path;
-
-    if (!parentPath) {
-      // Use first discovered vault
-      const vaults = discoverObsidianVaults();
-      if (vaults.length === 0) {
-        return {
-          success: false,
-          error: 'No Obsidian vaults found. Please specify vault_path.'
-        };
-      }
-      parentPath = vaults[0].path;
-    }
+    // Use provided vault_path or default to RealDealVault
+    const parentPath = args.vault_path || DEFAULT_VAULT_PATH;
 
     const node = await DreamNodeService.createDreamNode(
       parentPath,
@@ -119,7 +108,8 @@ export async function createDreamnode(args: {
         uuid: node.uuid,
         title: node.title,
         type: node.type,
-        path: node.path
+        path: node.path,
+        radicleId: node.radicleId
       }
     };
   } catch (error) {
@@ -252,7 +242,7 @@ export const foundationTools = {
 
   create_dreamnode: {
     name: 'create_dreamnode',
-    description: 'Create a new DreamNode with git repository initialization',
+    description: 'Create a new DreamNode with git repository and Radicle initialization. Returns UUID and Radicle ID for relationship tracking.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -267,7 +257,7 @@ export const foundationTools = {
         },
         vault_path: {
           type: 'string',
-          description: 'Optional path to the vault where the DreamNode should be created'
+          description: 'Path to vault where DreamNode should be created. Defaults to /Users/davidrug/RealDealVault'
         }
       },
       required: ['name', 'type']
