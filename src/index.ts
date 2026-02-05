@@ -14,7 +14,6 @@ import {
 
 import { foundationTools } from './tools/foundation.js';
 import { submoduleTools } from './tools/submodule.js';
-import { contentTools } from './tools/content.js';
 import { semanticTools } from './tools/semantic.js';
 import { agentLoaderTools } from './tools/agent-loader.js';
 import { spawnChatTools } from './tools/spawn-chat.js';
@@ -23,7 +22,6 @@ import { spawnChatTools } from './tools/spawn-chat.js';
 const allTools = {
   ...foundationTools,
   ...submoduleTools,
-  ...contentTools,
   ...semanticTools,
   ...agentLoaderTools,
   ...spawnChatTools
