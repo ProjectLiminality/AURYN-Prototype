@@ -17,6 +17,34 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 
 // ============================================================================
+// TITLE SANITIZATION (mirrored from InterBrain title-sanitization.ts)
+// ============================================================================
+
+/**
+ * Sanitize human-readable title to PascalCase for file system and Radicle
+ *
+ * Examples:
+ * - "Financial Support Papa" → "FinancialSupportPapa"
+ * - "Mind-Body Connection" → "MindBodyConnection"
+ * - "Café Philosophy" → "CafePhilosophy"
+ */
+function sanitizeTitleToPascalCase(title: string): string {
+  return title
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .split(/[\s\-_.]+/)
+    .filter(word => word.length > 0)
+    .map(word => {
+      const cleaned = word.replace(/[^a-zA-Z0-9]/g, '');
+      if (cleaned.length === 0) return '';
+      return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
+    })
+    .filter(word => word.length > 0)
+    .join('')
+    .substring(0, 100);
+}
+
+// ============================================================================
 // DEFAULT CONFIGURATION
 // ============================================================================
 
@@ -518,7 +546,8 @@ export class DreamNodeService {
     name: string,
     type: 'dream' | 'dreamer'
   ): Promise<DreamNodeInfo> {
-    const nodePath = path.join(parentPath, name);
+    const dirName = sanitizeTitleToPascalCase(name);
+    const nodePath = path.join(parentPath, dirName);
     const uuid = randomUUID();
 
     // Create directory
@@ -584,7 +613,7 @@ export class DreamNodeService {
     await commitAllChanges(nodePath, `Initialize DreamNode: ${name}`);
 
     // Initialize Radicle (after initial commit exists)
-    const radicleId = await initRadicle(nodePath, name, `DreamNode: ${name}`);
+    const radicleId = await initRadicle(nodePath, dirName, `DreamNode: ${name}`);
 
     // Update .udd with radicleId if available
     if (radicleId) {
@@ -698,10 +727,6 @@ export class SubmoduleService {
     childPath: string,
     submoduleName?: string
   ): Promise<{ success: boolean; error?: string }> {
-    const { exec } = require('child_process');
-    const { promisify } = require('util');
-    const execAsync = promisify(exec);
-
     try {
       // Verify both are git repos
       if (!isGitRepo(parentPath)) {
@@ -759,10 +784,6 @@ export class SubmoduleService {
     parentPath: string,
     submoduleName: string
   ): Promise<{ success: boolean; error?: string }> {
-    const { exec } = require('child_process');
-    const { promisify } = require('util');
-    const execAsync = promisify(exec);
-
     try {
       // Deinitialize submodule
       await execAsync(`git submodule deinit -f "${submoduleName}"`, { cwd: parentPath });
