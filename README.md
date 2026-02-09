@@ -42,11 +42,56 @@ In collective dreamweaving sessions:
 
 1. Transcription runs continuously (all voices heard)
 2. Hold spacebar → AURYN knows you're addressing it
-3. Speak your intent: "Add the 9/11 investigation to this canvas"
+3. Speak your intent: "Weave the 9/11 investigation into this DreamSong"
 4. Release spacebar → AURYN has permission to act
-5. AURYN: imports submodule if needed, places DreamTalk on canvas
+5. AURYN: asks for brief justification, weaves minimal DreamSong, submodule follows implicitly
 
 Voice-first on mobile. Cursor + voice on desktop.
+
+### The Core Principle: Relationships Are Downstream of DreamSongs
+
+Submodule relationships are **never directly manipulated**. They are inferred from DreamSongs.
+
+When you weave a DreamSong (canvas), you place DreamTalk images from other DreamNodes and write text explaining how they relate. The system observes what you reference and manages submodule imports/removals automatically. This is an **enabling constraint**:
+
+- **To import**: Reference a DreamNode's DreamTalk in your DreamSong. The submodule relationship follows.
+- **To remove**: Edit the DreamSong to remove the reference. On save, the system cleans up the submodule.
+- **No orphan imports**: Every submodule relationship is justified by a story. No unexplained dependencies.
+- **No accidental breakage**: You can't remove a submodule that a DreamSong references without first editing the DreamSong.
+
+This means the holarchy view (sub/supermodule relationships) is **read-only visualization** of what has been inferred from your creative work. You don't manage the graph - you tell stories, and the graph emerges.
+
+### Why This Matters
+
+Without this constraint, you get two competing systems: manual submodule management vs. DreamSong-inferred relationships. They fight each other. With it, everything flows from one source of truth: the creative act of dreamweaving.
+
+For agents, this means AURYN doesn't just `add_submodule`. Instead:
+1. User says "I need DreamNode X in this context"
+2. AURYN asks: "Why does it belong here?" (even one sentence suffices)
+3. AURYN weaves a minimal DreamSong: the DreamTalk images + justification text
+4. The submodule relationship is created as a downstream effect of the DreamSong existing
+
+This also means **DreamSongs become the holarchy map**. At every level of the hierarchy, the DreamSong explains *why* these submodules are here, how they relate, and what purpose they serve. Far richer context for agentic navigation than bare dependency lists.
+
+### The DreamTalk Requirement
+
+Every DreamNode needs a DreamTalk image. This is not optional decoration - it's what makes a node dreamweave-ready. Without an image, a DreamNode cannot be referenced in a DreamSong, and therefore cannot participate in holarchic relationships.
+
+For DreamNodes that lack a DreamTalk:
+- AURYN auto-generates one from the README using AI image generation
+- The generated image serves as a placeholder that can be replaced with something more authentic later
+- This ensures every DreamNode in the system is always ready for dreamweaving
+
+### Agentic Dreamweaving (Voice-Driven)
+
+AURYN is the dreamweaving assistant, especially for mobile where everything is voice-driven:
+
+1. "Weave these three ideas together" → AURYN asks for brief justification for each
+2. User speaks 1-2 sentences per relationship → AURYN has enough to weave
+3. AURYN creates minimal DreamSong (images + text) → submodules follow implicitly
+4. User can later enrich the DreamSong with more detail on desktop canvas
+
+The DreamSong doesn't need to be elaborate. A minimal weave - DreamTalk images placed on canvas with a sentence of context - is sufficient. The system just needs to know *what* is referenced and *why*.
 
 ## MCP Tools
 
@@ -58,13 +103,13 @@ Voice-first on mobile. Cursor + voice on desktop.
 | `update_dreamnode` | Update metadata (title, type) |
 | `delete_dreamnode` | Delete a DreamNode (requires confirmation) |
 
-### Relationships
+### Relationships (Read-Only + DreamSong-Driven)
 | Tool | Description |
 |------|-------------|
-| `add_submodule` | Import another DreamNode as submodule |
-| `remove_submodule` | Remove submodule relationship |
-| `list_submodules` | List submodules of a DreamNode |
+| `list_submodules` | List submodules of a DreamNode (read-only view) |
 | `sync_context` | Regenerate context file after submodule changes |
+
+Note: `add_submodule` and `remove_submodule` exist as low-level primitives but should not be called directly. Submodule relationships are managed through dreamweaving - the InterBrain infers them from DreamSong canvas references. AURYN's agentic dreamweaving flow (future) will weave DreamSongs that result in submodule changes as a downstream effect.
 
 ### Semantic Search
 | Tool | Description |
@@ -73,12 +118,6 @@ Voice-first on mobile. Cursor + voice on desktop.
 | `index_dreamnodes` | Index all DreamNodes for search |
 | `check_ollama_status` | Verify embedding service is running |
 
-### Content
-| Tool | Description |
-|------|-------------|
-| `read_readme` | Get README content |
-| `write_readme` | Overwrite README (requires confirmation) |
-
 ## The Unix Philosophy
 
 MCP tools are prototypes. The real implementation: CLI tools with standard I/O.
@@ -86,7 +125,7 @@ MCP tools are prototypes. The real implementation: CLI tools with standard I/O.
 ```bash
 auryn create "New Idea" --type dream
 auryn search "something about consciousness"
-auryn import parent-node child-node
+auryn weave parent-node child-node --reason "brief justification"
 ```
 
 InterBrain wraps these the same way it wraps git - shell commands, simple, composable. Any AI agent can use them. Any script can call them.
