@@ -93,6 +93,28 @@ AURYN is the dreamweaving assistant, especially for mobile where everything is v
 
 The DreamSong doesn't need to be elaborate. A minimal weave - DreamTalk images placed on canvas with a sentence of context - is sufficient. The system just needs to know *what* is referenced and *why*.
 
+### Pop-Out to Sovereign
+
+The inverse of importing: content that starts as a local file inside a DreamNode can be promoted to its own sovereign DreamNode. AURYN handles the full flow:
+
+1. User identifies content that deserves sovereignty ("this should be its own thing")
+2. AURYN creates a new DreamNode from that content
+3. The local file is replaced by a submodule import of the new DreamNode
+4. The DreamSong file path is updated to point into the submodule
+
+The final state is the same as if the DreamNode had always existed externally: sovereign repo, submodule clone, correct file path. This is how knowledge gardens grow — not in size, but in interconnectedness. Broad contexts gain finer structure over time as pieces pop out into their own sovereignty.
+
+### Knowledge Refactoring (Unstructured → DreamNodes)
+
+AURYN is where all agentic capacity related to dreamweaving lives. This includes the refactoring of existing unstructured knowledge into DreamNodes:
+
+- **Any file path**: Point AURYN at a folder, a file, a Notion export, a CSV dump, an existing Obsidian vault. Everything is a file, Unix-style.
+- **Minimum viable initial structure**: AURYN creates DreamNodes with just enough organization to be compatible with the dreamweaving system. Not every detail predicted upfront — that would alienate you from the knowledge.
+- **Organic refinement**: Through ongoing knowledge gardening (talking to AURYN about how things relate, what you're thinking about), finer structure emerges naturally. Pop-out happens when a piece is ready for sovereignty.
+- **DreamSong as first pass**: AURYN can weave a DreamSong from existing content, using found images or generating placeholders. You read it, correct it, and the knowledge garden takes root.
+
+The less-is-more principle: initial structuring is light, leaving space for organic growth. The knowledge garden increases its interconnectedness through use, not through upfront engineering.
+
 ## MCP Tools
 
 ### DreamNode Operations
