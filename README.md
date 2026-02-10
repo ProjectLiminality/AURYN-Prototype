@@ -140,6 +140,9 @@ Note: `add_submodule` and `remove_submodule` exist as low-level primitives but s
 | `index_dreamnodes` | Index all DreamNodes for search |
 | `check_ollama_status` | Verify embedding service is running |
 
+### Missing / TODO
+- **Liminal web relationships**: No MCP tool exists yet to create or manage horizontal liminal web relationships (dream-to-dreamer connections). Currently only vertical holarchic relationships (submodules/supermodules) are supported. Need a tool to associate a Dream with a Dreamer (and vice versa) without using the submodule mechanism.
+
 ## The Unix Philosophy
 
 MCP tools are prototypes. The real implementation: CLI tools with standard I/O.
