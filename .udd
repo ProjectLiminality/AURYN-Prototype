@@ -7,5 +7,12 @@
   "submodules": [
     "rad:zJqVpsnnegqWgqY2sshQYnq8CkBR"
   ],
-  "supermodules": []
+  "supermodules": [
+    {
+      "radicleId": "rad:zDvap1h3WQCkpDLwmszhkQfph5AY",
+      "title": "Spring Launch",
+      "atCommit": "",
+      "addedAt": 1770724364346
+    }
+  ]
 }
