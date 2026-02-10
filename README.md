@@ -82,6 +82,20 @@ For DreamNodes that lack a DreamTalk:
 - The generated image serves as a placeholder that can be replaced with something more authentic later
 - This ensures every DreamNode in the system is always ready for dreamweaving
 
+### DreamTalk Image Intelligence (TODO)
+
+The current image generation is too generic. AURYN needs a smarter pipeline:
+
+**1. Web retrieval first**: Before generating anything, AURYN should check whether the subject already has an established visual identity. Starlink has a logo. YouTube has a logo. These *are* their DreamTalk symbols — don't generate a random satellite dish when the actual mark exists. This needs to be performant and precise (not a full browser scrape, just targeted image retrieval).
+
+**2. Style reference system**: When AURYN does generate an image, it should be guided by:
+- A **style reference image** — a visual anchor for the aesthetic. Exposed in settings so each user can set their own, but AURYN ships with at least one default.
+- A **meta-prompt** — not fed to the image AI directly, but read by AURYN when it designs the actual generation prompt. This gives artistic direction ("prefer symbolic over literal", "warm tones", etc.) without micromanaging every generation.
+
+**3. Calibrated prompt design**: The styling language AURYN uses when prompting the image AI needs tuning. Right now some results are great and others are completely meaningless relative to what they represent. The meta-prompt + style reference together should bring consistency and intentionality.
+
+The flow becomes: subject → web search for existing visual identity → if found, use it → if not, generate with style reference + meta-prompt → result is a DreamTalk that actually means something.
+
 ### Agentic Dreamweaving (Voice-Driven)
 
 AURYN is the dreamweaving assistant, especially for mobile where everything is voice-driven:
