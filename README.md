@@ -12,18 +12,49 @@ AURYN is three things at once:
 
 When you create a new DreamNode, AURYN gives itself to creation. The template copies, the new node inherits AURYN's essence while AURYN remains whole. The strange loop.
 
-## Current State vs. Future State
+## Current State (as of 2026-02-11)
+
+AURYN is a fully functional MCP server with **18 tools** across 6 domains. All tools are implemented with proper error handling and graceful degradation (Ollama and Radicle failures are non-fatal). The codebase is clean TypeScript with zero TODOs or stubs.
+
+**What works now:**
+- DreamNode CRUD (create, read, update, delete)
+- Submodule relationships with bidirectional tracking (parent ↔ child)
+- Semantic search (fuzzy always + vector-based when Ollama available) with sliding window chunking
+- DreamSong weaving and reading (Obsidian canvas format)
+- Sub-agent loading (DreamNode as agent with scoped tools and cascading context)
+- Session spawning (open Claude Code in any DreamNode's context, macOS)
+
+**What's crystallizing conceptually but not yet implemented:**
+- Holarchic resonance management (downstream/upstream cherry-pick flows between sovereign repos and submodule clones)
+- Situational assessment as a native operation (pull latest submodule state → read DreamSong + READMEs + recent commits → produce status → update README)
+- Pop-out to sovereign (promote local content to its own DreamNode)
+- Knowledge refactoring (unstructured files → DreamNodes)
+- DreamTalk image intelligence (web retrieval, style references, meta-prompts)
+- Vault-level meta-context (root README as life project dashboard)
+
+## Architecture
+
+```
+AURYN/
+├── README.md           # This file
+├── CLAUDE.md           # Agent instructions
+├── InterBrain/         # Git submodule (temporary - will flip in production)
+├── Software Gardening/ # Git submodule (philosophy)
+└── src/
+    ├── index.ts                    # MCP server entry point
+    ├── services/
+    │   └── standalone-adapter.ts   # All service implementations (~1140 lines)
+    └── tools/
+        ├── foundation.ts           # CRUD operations
+        ├── submodule.ts            # Relationship management
+        ├── semantic.ts             # Search operations
+        ├── dreamweaving.ts         # Canvas generation
+        ├── agent-loader.ts         # Sub-agent management
+        └── spawn-chat.ts           # Session spawning
+```
 
 **Now**: AURYN imports InterBrain as submodule (for prototyping)
 **Future**: InterBrain imports AURYN as submodule (for production)
-
-Why the flip? Because AURYN is a *component* of InterBrain/DreamOS, not the container. AURYN provides:
-- DreamNode lifecycle (create, read, update, delete)
-- Semantic search and context awareness
-- Voice-to-action in Dialogos mode
-- The git template that every DreamNode inherits
-
-InterBrain provides the UI, the canvas, the 3D visualization. AURYN is the spirit; InterBrain is the body.
 
 ## How AURYN Works
 
@@ -34,19 +65,21 @@ InterBrain provides the UI, the canvas, the 3D visualization. AURYN is the spiri
 3. **Return the list** - you see which DreamNodes matter
 4. **Act with full knowledge** - AURYN helps with context loaded
 
-This is relevance realization. The system finds the right context before acting.
+### Two Axes of Resonance
 
-### The Spacebar Pattern (Dialogos Mode)
+AURYN mediates two orthogonal dimensions of how DreamNodes relate:
 
-In collective dreamweaving sessions:
+**Horizontal (Social Resonance)**: Dream-to-Dreamer connections across the liminal web. Peers share DreamNodes through cherry-pick-based curation. Signal propagates transitively through trust relationships. Managed by the InterBrain's social resonance filter.
 
-1. Transcription runs continuously (all voices heard)
-2. Hold spacebar → AURYN knows you're addressing it
-3. Speak your intent: "Weave the 9/11 investigation into this DreamSong"
-4. Release spacebar → AURYN has permission to act
-5. AURYN: asks for brief justification, weaves minimal DreamSong, submodule follows implicitly
+**Vertical (Holarchic Resonance)**: Parent-child nesting via submodules. Changes flow in two directions:
+- **Downstream** (sovereign → submodule clones): The sovereign main branch advances; each submodule clone cherry-picks what's relevant to its context. Safe, frequent, pull-based.
+- **Upstream** (submodule clone → sovereign): A feature matures in context; when ready, it gets cherry-picked back to sovereign main. Deliberate, conscious, push-based.
 
-Voice-first on mobile. Cursor + voice on desktop.
+The two axes intersect at the **sovereign DreamNode** — the canonical version at the vault root. Horizontal resonance (peers) feeds into it. Vertical resonance (contexts) flows out of it and back.
+
+**Cherry-pick is the universal operation** because it preserves sovereignty. A merge says "I accept your history as mine." A cherry-pick says "I was inspired by your change and I recreate it in my own context." In the agentic age, every commit is a prompt — the AI agent understands intent and implements appropriately for its context, making merge conflicts a non-concept.
+
+**Context branches**: Complex DreamNodes (like InterBrain) maintain a branch per context they're imported into. The branch name mirrors the parent DreamNode. Simple DreamNodes track main directly.
 
 ### The Core Principle: Relationships Are Downstream of DreamSongs
 
@@ -56,129 +89,114 @@ When you weave a DreamSong (canvas), you place DreamTalk images from other Dream
 
 - **To import**: Reference a DreamNode's DreamTalk in your DreamSong. The submodule relationship follows.
 - **To remove**: Edit the DreamSong to remove the reference. On save, the system cleans up the submodule.
-- **No orphan imports**: Every submodule relationship is justified by a story. No unexplained dependencies.
+- **No orphan imports**: Every submodule relationship is justified by a story.
 - **No accidental breakage**: You can't remove a submodule that a DreamSong references without first editing the DreamSong.
 
-This means the holarchy view (sub/supermodule relationships) is **read-only visualization** of what has been inferred from your creative work. You don't manage the graph - you tell stories, and the graph emerges.
-
-### Why This Matters
-
-Without this constraint, you get two competing systems: manual submodule management vs. DreamSong-inferred relationships. They fight each other. With it, everything flows from one source of truth: the creative act of dreamweaving.
-
-For agents, this means AURYN doesn't just `add_submodule`. Instead:
-1. User says "I need DreamNode X in this context"
-2. AURYN asks: "Why does it belong here?" (even one sentence suffices)
-3. AURYN weaves a minimal DreamSong: the DreamTalk images + justification text
-4. The submodule relationship is created as a downstream effect of the DreamSong existing
-
-This also means **DreamSongs become the holarchy map**. At every level of the hierarchy, the DreamSong explains *why* these submodules are here, how they relate, and what purpose they serve. Far richer context for agentic navigation than bare dependency lists.
+DreamSongs become the holarchy map. At every level, the DreamSong explains *why* these submodules are here and how they relate. Far richer context for agentic navigation than bare dependency lists.
 
 ### The DreamTalk Requirement
 
-Every DreamNode needs a DreamTalk image. This is not optional decoration - it's what makes a node dreamweave-ready. Without an image, a DreamNode cannot be referenced in a DreamSong, and therefore cannot participate in holarchic relationships.
-
-For DreamNodes that lack a DreamTalk:
-- AURYN auto-generates one from the README using AI image generation
-- The generated image serves as a placeholder that can be replaced with something more authentic later
-- This ensures every DreamNode in the system is always ready for dreamweaving
-
-### DreamTalk Image Intelligence (TODO)
-
-The current image generation is too generic. AURYN needs a smarter pipeline:
-
-**1. Web retrieval first**: Before generating anything, AURYN should check whether the subject already has an established visual identity. Starlink has a logo. YouTube has a logo. These *are* their DreamTalk symbols — don't generate a random satellite dish when the actual mark exists. This needs to be performant and precise (not a full browser scrape, just targeted image retrieval).
-
-**2. Style reference system**: When AURYN does generate an image, it should be guided by:
-- A **style reference image** — a visual anchor for the aesthetic. Exposed in settings so each user can set their own, but AURYN ships with at least one default.
-- A **meta-prompt** — not fed to the image AI directly, but read by AURYN when it designs the actual generation prompt. This gives artistic direction ("prefer symbolic over literal", "warm tones", etc.) without micromanaging every generation.
-
-**3. Calibrated prompt design**: The styling language AURYN uses when prompting the image AI needs tuning. Right now some results are great and others are completely meaningless relative to what they represent. The meta-prompt + style reference together should bring consistency and intentionality.
-
-The flow becomes: subject → web search for existing visual identity → if found, use it → if not, generate with style reference + meta-prompt → result is a DreamTalk that actually means something.
-
-### Agentic Dreamweaving (Voice-Driven)
-
-AURYN is the dreamweaving assistant, especially for mobile where everything is voice-driven:
-
-1. "Weave these three ideas together" → AURYN asks for brief justification for each
-2. User speaks 1-2 sentences per relationship → AURYN has enough to weave
-3. AURYN creates minimal DreamSong (images + text) → submodules follow implicitly
-4. User can later enrich the DreamSong with more detail on desktop canvas
-
-The DreamSong doesn't need to be elaborate. A minimal weave - DreamTalk images placed on canvas with a sentence of context - is sufficient. The system just needs to know *what* is referenced and *why*.
+Every DreamNode needs a DreamTalk image — it's what makes a node dreamweave-ready. Without an image, a DreamNode cannot be referenced in a DreamSong and therefore cannot participate in holarchic relationships.
 
 ### Pop-Out to Sovereign
 
 The inverse of importing: content that starts as a local file inside a DreamNode can be promoted to its own sovereign DreamNode. AURYN handles the full flow:
 
 1. User identifies content that deserves sovereignty ("this should be its own thing")
-2. AURYN creates a new DreamNode from that content
+2. AURYN creates a new sovereign DreamNode from that content
 3. The local file is replaced by a submodule import of the new DreamNode
-4. The DreamSong file path is updated to point into the submodule
+4. The DreamSong is updated — file references now point into the submodule
+5. A context branch is created in the submodule clone (named after the parent)
 
-The final state is the same as if the DreamNode had always existed externally: sovereign repo, submodule clone, correct file path. This is how knowledge gardens grow — not in size, but in interconnectedness. Broad contexts gain finer structure over time as pieces pop out into their own sovereignty.
+The final state is the same as if the DreamNode had always existed externally: sovereign repo, submodule clone with context branch, correct DreamSong paths. This is how knowledge gardens grow — not in size, but in interconnectedness.
 
 ### Knowledge Refactoring (Unstructured → DreamNodes)
 
-AURYN is where all agentic capacity related to dreamweaving lives. This includes the refactoring of existing unstructured knowledge into DreamNodes:
+Point AURYN at any file path — a folder, a Notion export, a CSV dump, an existing Obsidian vault. AURYN creates DreamNodes with minimum viable structure, just enough for dreamweaving compatibility. Through ongoing knowledge gardening, finer structure emerges naturally. Pop-out happens when a piece is ready for sovereignty.
 
-- **Any file path**: Point AURYN at a folder, a file, a Notion export, a CSV dump, an existing Obsidian vault. Everything is a file, Unix-style.
-- **Minimum viable initial structure**: AURYN creates DreamNodes with just enough organization to be compatible with the dreamweaving system. Not every detail predicted upfront — that would alienate you from the knowledge.
-- **Organic refinement**: Through ongoing knowledge gardening (talking to AURYN about how things relate, what you're thinking about), finer structure emerges naturally. Pop-out happens when a piece is ready for sovereignty.
-- **DreamSong as first pass**: AURYN can weave a DreamSong from existing content, using found images or generating placeholders. You read it, correct it, and the knowledge garden takes root.
+### Situational Assessment
 
-The less-is-more principle: initial structuring is light, leaving space for organic growth. The knowledge garden increases its interconnectedness through use, not through upfront engineering.
+AURYN can assess the state of any DreamNode that contains submodules (like a project DreamSong):
 
-## MCP Tools
+1. **Pull latest** — update all submodule pointers to sovereign state
+2. **Read the DreamSong** — understand the narrative and relationships
+3. **Check each submodule** — read README + recent commits for ground truth
+4. **Report honestly** — what's alive, what's stale, what's missing
+5. **Update the README** — the Current State section reflects reality
 
-### DreamNode Operations
+The README is the always-current truth. When AURYN does a situational assessment, it reads the README first. If the README is stale, that's the first thing to fix.
+
+## MCP Tools (18 total)
+
+### DreamNode Operations (4)
 | Tool | Description |
 |------|-------------|
+| `create_dreamnode` | Create new DreamNode with git init, Radicle init, returns UUID |
 | `read_dreamnode` | Read metadata and README by UUID |
-| `create_dreamnode` | Create new DreamNode with .udd and git init |
 | `update_dreamnode` | Update metadata (title, type) |
 | `delete_dreamnode` | Delete a DreamNode (requires confirmation) |
 
-### Relationships (Read-Only + DreamSong-Driven)
+### Relationships (4)
 | Tool | Description |
 |------|-------------|
-| `list_submodules` | List submodules of a DreamNode (read-only view) |
-| `sync_context` | Regenerate context file after submodule changes |
+| `add_submodule` | Import a DreamNode as submodule (low-level primitive) |
+| `remove_submodule` | Remove a submodule relationship |
+| `list_submodules` | List submodules of a DreamNode |
+| `sync_context` | Regenerate `.claude/submodule-context.md` with @imports for all submodule READMEs |
 
-Note: `add_submodule` and `remove_submodule` exist as low-level primitives but should not be called directly. Submodule relationships are managed through dreamweaving - the InterBrain infers them from DreamSong canvas references. AURYN's agentic dreamweaving flow (future) will weave DreamSongs that result in submodule changes as a downstream effect.
+Note: `add_submodule` and `remove_submodule` are low-level primitives. The intended flow is DreamSong-driven: weave a DreamSong → submodule relationships are inferred as a downstream effect.
 
-### Semantic Search
+### Semantic Search (3)
 | Tool | Description |
 |------|-------------|
-| `process_content` | Semantic sweep on text/file, returns candidates |
-| `index_dreamnodes` | Index all DreamNodes for search |
-| `check_ollama_status` | Verify embedding service is running |
+| `process_content` | Unified search: fuzzy (always) + semantic (if Ollama). Handles text and files with sliding window chunking. |
+| `index_dreamnodes` | Index all DreamNodes for vector search |
+| `check_ollama_status` | Verify Ollama embedding service is available |
 
-### Missing / TODO
-- **Liminal web relationships**: No MCP tool exists yet to create or manage horizontal liminal web relationships (dream-to-dreamer connections). Currently only vertical holarchic relationships (submodules/supermodules) are supported. Need a tool to associate a Dream with a Dreamer (and vice versa) without using the submodule mechanism.
+### Dreamweaving (2)
+| Tool | Description |
+|------|-------------|
+| `weave_dreamsong` | Generate DreamSong.canvas from source DreamNodes with descriptions |
+| `read_dreamsong` | Parse DreamSong.canvas into topologically sorted content blocks |
 
-## The Unix Philosophy
+### Agent Management (3)
+| Tool | Description |
+|------|-------------|
+| `load_dreamnode_agent` | Load DreamNode as sub-agent with README context and scoped tools |
+| `unload_dreamnode_agent` | Remove a loaded sub-agent |
+| `list_loaded_agents` | List all currently loaded sub-agents |
 
-MCP tools are prototypes. The real implementation: CLI tools with standard I/O.
+### Session Management (2)
+| Tool | Description |
+|------|-------------|
+| `spawn_chat` | Open Claude Code in a DreamNode's directory (macOS) |
+| `pop_out_to_sovereign` | Promote local content to sovereign DreamNode with submodule replacement (planned) |
 
-```bash
-auryn create "New Idea" --type dream
-auryn search "something about consciousness"
-auryn weave parent-node child-node --reason "brief justification"
-```
+### Not Yet Implemented
+- **Liminal web relationships**: No tool for horizontal dream-to-dreamer connections without submodules
+- **Situational assessment**: Pull submodule state → read DreamSong + READMEs → produce status report
+- **Submodule refresh**: Update all submodule pointers to latest sovereign state before assessment
+- **DreamTalk image intelligence**: Web retrieval for existing logos, style reference system, meta-prompt calibration
 
-InterBrain wraps these the same way it wraps git - shell commands, simple, composable. Any AI agent can use them. Any script can call them.
+## Roadmap (Prioritized for Spring Launch)
 
-## Architecture
+### Next Up
+1. **Pop-out to sovereign** — promote local files to DreamNodes with submodule replacement and DreamSong path updates
+2. **Situational assessment** — native "where are we?" operation for any DreamNode with submodules
+3. **Submodule refresh** — `git submodule update --remote` before any assessment
+4. **Knowledge refactoring** — vault consolidation (the Spring Launch prerequisite)
 
-```
-AURYN/
-├── README.md           # This file
-├── CLAUDE.md           # Agent instructions
-├── InterBrain/         # Git submodule (temporary - will flip)
-├── Software Gardening/ # Git submodule (philosophy)
-└── src/                # MCP server / CLI implementation
-```
+### Medium Priority
+- DreamTalk image intelligence (web retrieval, style references, meta-prompts)
+- DreamSong-inferred automatic submodule management (enforced pattern)
+- Liminal web relationship tooling
+- CLI tools (`auryn create`, `auryn search`, `auryn weave`)
+
+### Future
+- Spacebar/Dialogos mode (voice-driven intent recognition)
+- Architecture flip (InterBrain imports AURYN)
+- Cross-platform spawn_chat (Linux/Windows)
+- Real-time conversational co-pilot integration
 
 ## Setup
 
@@ -199,7 +217,7 @@ Add to `~/.claude/mcp.json`:
 }
 ```
 
-Requires Ollama with `nomic-embed-text` for semantic search.
+Requires Ollama with `nomic-embed-text` for semantic search (optional — fuzzy search works without it).
 
 ## Philosophy
 
@@ -208,5 +226,7 @@ README is the universal memory format:
 - **Human-readable**: Just markdown
 - **Git-versioned**: Full history
 - **Composable**: Submodules cascade context
+
+The sophistication ceiling has been removed. In the agentic age, system design is no longer constrained by user operability. AURYN holds the knowledge of how collective dreamweaving works and operates it on your behalf. Users interact through natural language. AURYN does the gardening.
 
 AURYN gives itself to every DreamNode. The Ouroboros - creating itself endlessly.

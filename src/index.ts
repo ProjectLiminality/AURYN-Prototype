@@ -18,6 +18,7 @@ import { semanticTools } from './tools/semantic.js';
 import { agentLoaderTools } from './tools/agent-loader.js';
 import { spawnChatTools } from './tools/spawn-chat.js';
 import { dreamweavingTools } from './tools/dreamweaving.js';
+import { popOutTools } from './tools/pop-out.js';
 
 // Combine all tools
 const allTools = {
@@ -26,7 +27,8 @@ const allTools = {
   ...semanticTools,
   ...agentLoaderTools,
   ...spawnChatTools,
-  ...dreamweavingTools
+  ...dreamweavingTools,
+  ...popOutTools
 };
 
 // Create MCP server
