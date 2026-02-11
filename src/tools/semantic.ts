@@ -7,12 +7,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   SemanticSearchService,
+  FuzzySearchService,
   createOllamaEmbeddingService,
   discoverAllDreamNodes
 } from '../services/standalone-adapter.js';
 
 // Global semantic search service instance
 let semanticSearchService: SemanticSearchService | null = null;
+
+// Global fuzzy search service instance (no Ollama dependency)
+let fuzzySearchService: FuzzySearchService | null = null;
 
 /**
  * Get or create the semantic search service
@@ -22,6 +26,16 @@ function getSemanticSearchService(): SemanticSearchService {
     semanticSearchService = new SemanticSearchService();
   }
   return semanticSearchService;
+}
+
+/**
+ * Get or create the fuzzy search service
+ */
+function getFuzzySearchService(): FuzzySearchService {
+  if (!fuzzySearchService) {
+    fuzzySearchService = new FuzzySearchService();
+  }
+  return fuzzySearchService;
 }
 
 // semantic_search REMOVED - consolidated into process_content
@@ -138,28 +152,19 @@ export async function processContent(args: {
     type: 'dream' | 'dreamer';
     best_score: number;
     matched_chunks: number[];
+    match_source: 'semantic' | 'fuzzy' | 'both';
     path: string;
   }>;
   stats?: {
     total_chunks: number;
     total_words: number;
     unique_candidates_found: number;
+    search_modes_used: string[];
   };
   error?: string;
 }> {
   try {
-    const service = getSemanticSearchService();
-
-    // Check Ollama availability
-    const ollamaAvailable = await service.isAvailable();
-    if (!ollamaAvailable) {
-      return {
-        success: false,
-        error: 'Ollama not available. Make sure Ollama is running with the nomic-embed-text model.'
-      };
-    }
-
-    // Get text from either direct input or file
+    // Get text from either direct input or file (before Ollama check)
     let inputText: string;
     if (args.file_path) {
       if (!fs.existsSync(args.file_path)) {
@@ -175,47 +180,53 @@ export async function processContent(args: {
     // Configuration with defaults
     const chunkSize = args.chunk_size ?? 150;
     const chunkOverlap = args.chunk_overlap ?? 30;
-    const threshold = args.threshold ?? 0.35;  // Low threshold to catch subtle mentions
+    const threshold = args.threshold ?? 0.35;
     const maxCandidatesPerChunk = args.max_candidates_per_chunk ?? 5;
 
-    // Tokenize into words
-    const words = inputText.split(/\s+/).filter(w => w.length > 0);
-    const totalWords = words.length;
+    // Track which search modes were used
+    const searchModesUsed: string[] = [];
 
-    // Create sliding window chunks
-    const chunks: Array<{ index: number; text: string; words: string[] }> = [];
-    let position = 0;
-    let chunkIndex = 0;
+    // ---- Fuzzy search (always runs, no Ollama dependency) ----
+    const fuzzyService = getFuzzySearchService();
+    const fuzzyResults = await fuzzyService.searchByText(inputText, {
+      maxResults: 20,
+      threshold: 0.25
+    });
+    searchModesUsed.push('fuzzy');
 
-    while (position < words.length) {
-      const chunkWords = words.slice(position, position + chunkSize);
-      chunks.push({
-        index: chunkIndex,
-        text: chunkWords.join(' '),
-        words: chunkWords
-      });
-
-      // Move position forward, accounting for overlap
-      position += (chunkSize - chunkOverlap);
-      chunkIndex++;
-
-      // Prevent infinite loop if overlap >= chunkSize
-      if (chunkSize <= chunkOverlap) {
-        position += 1;
-      }
-    }
-
-    // Track unique candidates across all chunks
+    // Build unique candidates map with match_source tracking
     const uniqueCandidates = new Map<string, {
       uuid: string;
       title: string;
       type: 'dream' | 'dreamer';
       best_score: number;
       matched_chunks: number[];
+      match_source: 'semantic' | 'fuzzy' | 'both';
       path: string;
     }>();
 
-    // Process each chunk
+    // Add fuzzy results (matched_chunks: [-1] to indicate fuzzy, not chunk-based)
+    for (const r of fuzzyResults) {
+      uniqueCandidates.set(r.node.uuid, {
+        uuid: r.node.uuid,
+        title: r.node.title,
+        type: r.node.type,
+        best_score: Math.round(r.score * 1000) / 1000,
+        matched_chunks: [-1],
+        match_source: 'fuzzy',
+        path: r.node.path
+      });
+    }
+
+    // ---- Semantic search (only if Ollama is available) ----
+    const semanticService = getSemanticSearchService();
+    const ollamaAvailable = await semanticService.isAvailable();
+
+    // Tokenize into words
+    const words = inputText.split(/\s+/).filter(w => w.length > 0);
+    const totalWords = words.length;
+
+    // For chunk-level results (only populated by semantic search)
     const processedChunks: Array<{
       index: number;
       text: string;
@@ -229,47 +240,81 @@ export async function processContent(args: {
       }>;
     }> = [];
 
-    for (const chunk of chunks) {
-      // Search for this chunk
-      const results = await service.searchByText(chunk.text, {
-        maxResults: maxCandidatesPerChunk,
-        threshold: threshold
-      });
+    let totalChunks = 0;
 
-      const candidates = results.map(r => ({
-        uuid: r.node.uuid,
-        title: r.node.title,
-        type: r.node.type,
-        score: Math.round(r.score * 1000) / 1000,
-        path: r.node.path
-      }));
+    if (ollamaAvailable) {
+      searchModesUsed.push('semantic');
 
-      // Track unique candidates
-      for (const candidate of candidates) {
-        const existing = uniqueCandidates.get(candidate.uuid);
-        if (existing) {
-          existing.matched_chunks.push(chunk.index);
-          if (candidate.score > existing.best_score) {
-            existing.best_score = candidate.score;
-          }
-        } else {
-          uniqueCandidates.set(candidate.uuid, {
-            uuid: candidate.uuid,
-            title: candidate.title,
-            type: candidate.type,
-            best_score: candidate.score,
-            matched_chunks: [chunk.index],
-            path: candidate.path
-          });
+      // Create sliding window chunks
+      const chunks: Array<{ index: number; text: string; words: string[] }> = [];
+      let position = 0;
+      let chunkIndex = 0;
+
+      while (position < words.length) {
+        const chunkWords = words.slice(position, position + chunkSize);
+        chunks.push({
+          index: chunkIndex,
+          text: chunkWords.join(' '),
+          words: chunkWords
+        });
+
+        position += (chunkSize - chunkOverlap);
+        chunkIndex++;
+
+        if (chunkSize <= chunkOverlap) {
+          position += 1;
         }
       }
 
-      processedChunks.push({
-        index: chunk.index,
-        text: chunk.text,
-        word_count: chunk.words.length,
-        candidates
-      });
+      totalChunks = chunks.length;
+
+      // Process each chunk with semantic search
+      for (const chunk of chunks) {
+        const results = await semanticService.searchByText(chunk.text, {
+          maxResults: maxCandidatesPerChunk,
+          threshold: threshold
+        });
+
+        const candidates = results.map(r => ({
+          uuid: r.node.uuid,
+          title: r.node.title,
+          type: r.node.type,
+          score: Math.round(r.score * 1000) / 1000,
+          path: r.node.path
+        }));
+
+        // Merge semantic results into unique candidates
+        for (const candidate of candidates) {
+          const existing = uniqueCandidates.get(candidate.uuid);
+          if (existing) {
+            existing.matched_chunks.push(chunk.index);
+            if (candidate.score > existing.best_score) {
+              existing.best_score = candidate.score;
+            }
+            // Upgrade match_source to 'both' if previously fuzzy-only
+            if (existing.match_source === 'fuzzy') {
+              existing.match_source = 'both';
+            }
+          } else {
+            uniqueCandidates.set(candidate.uuid, {
+              uuid: candidate.uuid,
+              title: candidate.title,
+              type: candidate.type,
+              best_score: candidate.score,
+              matched_chunks: [chunk.index],
+              match_source: 'semantic',
+              path: candidate.path
+            });
+          }
+        }
+
+        processedChunks.push({
+          index: chunk.index,
+          text: chunk.text,
+          word_count: chunk.words.length,
+          candidates
+        });
+      }
     }
 
     // Sort unique candidates by best score
@@ -281,9 +326,10 @@ export async function processContent(args: {
       chunks: processedChunks,
       unique_candidates: sortedUniqueCandidates,
       stats: {
-        total_chunks: chunks.length,
+        total_chunks: totalChunks,
         total_words: totalWords,
-        unique_candidates_found: sortedUniqueCandidates.length
+        unique_candidates_found: sortedUniqueCandidates.length,
+        search_modes_used: searchModesUsed
       }
     };
   } catch (error) {
@@ -328,7 +374,7 @@ export const semanticTools = {
 
   process_content: {
     name: 'process_content',
-    description: 'Unified semantic search for context-provider agent. Handles short queries and long text/files with sliding window chunking. Returns candidate DreamNodes for LLM filtering.',
+    description: 'Unified semantic search for context-provider agent. Handles short queries and long text/files with sliding window chunking. Returns candidate DreamNodes for LLM filtering. Combines fuzzy text matching (always available) with semantic search (requires Ollama). Falls back to fuzzy-only when Ollama is down.',
     inputSchema: {
       type: 'object' as const,
       properties: {

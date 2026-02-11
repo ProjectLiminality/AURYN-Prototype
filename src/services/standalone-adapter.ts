@@ -962,3 +962,179 @@ export class SemanticSearchService {
     return hash.toString(36);
   }
 }
+
+// ============================================================================
+// FUZZY TEXT SEARCH SERVICE
+// Mirrors Alfred plugin's alfredMatcher logic for name-based DreamNode matching.
+// Runs without Ollama — pure string matching with Levenshtein fallback.
+// ============================================================================
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function levenshteinDistance(a: string, b: string): number {
+  const la = a.length;
+  const lb = b.length;
+  if (la === 0) return lb;
+  if (lb === 0) return la;
+
+  let prev = new Array(lb + 1);
+  let curr = new Array(lb + 1);
+
+  for (let j = 0; j <= lb; j++) prev[j] = j;
+
+  for (let i = 1; i <= la; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= lb; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,       // deletion
+        curr[j - 1] + 1,   // insertion
+        prev[j - 1] + cost  // substitution
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[lb];
+}
+
+export class FuzzySearchService {
+  /**
+   * Build a match string from a DreamNode, mirroring Alfred's alfredMatcher:
+   * strip special chars, split camelCase, collapse whitespace.
+   */
+  buildMatchString(node: DreamNodeInfo): string {
+    const folderName = path.basename(node.path);
+    const raw = `${node.title} ${folderName}`;
+
+    return raw
+      // Split camelCase: "InterBrain" → "Inter Brain"
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+      // Strip special chars except spaces
+      .replace(/[^a-zA-Z0-9\s]/g, ' ')
+      // Collapse whitespace
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Extract search terms from input text.
+   * Returns individual words plus n-grams (2-4 words) to catch multi-word DreamNode titles.
+   */
+  extractSearchTerms(text: string): string[] {
+    const words = text
+      .replace(/[^a-zA-Z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(' ')
+      .filter(w => w.length > 1);
+
+    const terms = new Set<string>();
+
+    // Individual words (3+ chars to avoid noise)
+    for (const w of words) {
+      if (w.length >= 3) terms.add(w);
+    }
+
+    // N-grams (2-4 words) to match multi-word titles
+    for (let n = 2; n <= 4 && n <= words.length; n++) {
+      for (let i = 0; i <= words.length - n; i++) {
+        terms.add(words.slice(i, i + n).join(' '));
+      }
+    }
+
+    return Array.from(terms);
+  }
+
+  /**
+   * Score a single search term against a DreamNode.
+   * Tiered scoring: exact title > exact folder > prefix > word-boundary > substring > Levenshtein.
+   */
+  scoreTerm(term: string, node: DreamNodeInfo, matchString: string): number {
+    const termLower = term.toLowerCase();
+    const titleLower = node.title.toLowerCase();
+    const folderLower = path.basename(node.path).toLowerCase();
+    const matchLower = matchString.toLowerCase();
+
+    // Exact title match
+    if (titleLower === termLower) return 1.0;
+
+    // Exact folder name match
+    if (folderLower === termLower) return 0.9;
+
+    // Title starts with term
+    if (titleLower.startsWith(termLower)) return 0.85;
+
+    // Word-boundary match in match string (higher for longer terms)
+    const wordBoundaryRe = new RegExp(`\\b${escapeRegex(termLower)}`, 'i');
+    if (wordBoundaryRe.test(matchString)) {
+      const lengthBonus = Math.min(termLower.length / 12, 0.3);
+      return 0.5 + lengthBonus;
+    }
+
+    // Plain substring in match string
+    if (matchLower.includes(termLower)) {
+      const lengthBonus = Math.min(termLower.length / 15, 0.3);
+      return 0.3 + lengthBonus;
+    }
+
+    // Levenshtein for misspellings (only for terms 4+ chars, distance ≤ 2)
+    if (termLower.length >= 4) {
+      const distTitle = levenshteinDistance(termLower, titleLower);
+      const distFolder = levenshteinDistance(termLower, folderLower);
+      const minDist = Math.min(distTitle, distFolder);
+
+      if (minDist <= 1) return 0.5;
+      if (minDist <= 2) return 0.35;
+
+      // Also check against individual words in match string
+      const matchWords = matchLower.split(' ');
+      for (const mw of matchWords) {
+        if (mw.length >= 3) {
+          const d = levenshteinDistance(termLower, mw);
+          if (d <= 1) return 0.45;
+          if (d <= 2) return 0.3;
+        }
+      }
+    }
+
+    return 0;
+  }
+
+  /**
+   * Search all DreamNodes by fuzzy text matching.
+   * Returns SearchResult[] (same interface as SemanticSearchService.searchByText).
+   */
+  async searchByText(
+    text: string,
+    options: { maxResults?: number; threshold?: number } = {}
+  ): Promise<SearchResult[]> {
+    const { maxResults = 10, threshold = 0.25 } = options;
+
+    const allNodes = await discoverAllDreamNodes();
+    const terms = this.extractSearchTerms(text);
+
+    if (terms.length === 0) return [];
+
+    const results: SearchResult[] = [];
+
+    for (const node of allNodes) {
+      const matchString = this.buildMatchString(node);
+      let bestScore = 0;
+
+      for (const term of terms) {
+        const score = this.scoreTerm(term, node, matchString);
+        if (score > bestScore) bestScore = score;
+      }
+
+      if (bestScore >= threshold) {
+        results.push({ node, score: bestScore });
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, maxResults);
+  }
+}
