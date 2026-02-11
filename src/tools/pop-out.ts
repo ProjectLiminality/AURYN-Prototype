@@ -5,6 +5,17 @@
  * The file is moved to the new DreamNode, which is then imported back as a submodule.
  * DreamSong references are updated to point into the submodule.
  *
+ * Remote topology (enforced by this tool and SubmoduleService):
+ *   Radicle ← sovereign repo (vault root) ← submodule clone
+ *
+ * - Sovereign DreamNode at vault root has Radicle as its remote
+ * - Submodule clones inside parent DreamNodes point to the local sovereign as origin
+ * - This ensures fast local operations while Radicle handles network distribution
+ *
+ * SubmoduleService.addSubmodule already uses the sovereign's absolute local path
+ * when running `git submodule add`, so .gitmodules URLs naturally point to the
+ * local sovereign. No additional remote configuration needed.
+ *
  * This is how knowledge gardens grow — not in size, but in interconnectedness.
  */
 
