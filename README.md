@@ -14,7 +14,7 @@ When you create a new DreamNode, AURYN gives itself to creation. The template co
 
 ## Current State (as of 2026-02-12)
 
-AURYN is a fully functional MCP server with **24 tools** across 9 domains. All tools are implemented with proper error handling and graceful degradation (Ollama and Radicle failures are non-fatal). The codebase is clean TypeScript with zero TODOs or stubs.
+AURYN is a fully functional MCP server with **35 tools** across 13 domains. All tools are implemented with proper error handling and graceful degradation (Ollama and Radicle failures are non-fatal). The codebase is clean TypeScript with zero TODOs or stubs.
 
 **What works now:**
 - DreamNode CRUD (create, read, update, delete)
@@ -26,10 +26,10 @@ AURYN is a fully functional MCP server with **24 tools** across 9 domains. All t
 - Liminal web relationships (Dream-to-Dreamer horizontal connections via liminal-web.json)
 - Pop-out to sovereign (promote local content to its own DreamNode with submodule replacement and DreamSong updates)
 - Merge DreamNodes (unify two nodes into one sovereign entity preserving both git histories and all cross-references)
+- Social resonance filter (Radicle publish/clone, peer sync, cherry-pick collaboration with full state machine, collaboration memory)
+- Coherence beacon (ignite/detect beacon commits after dreamweaving)
 
 **What's crystallizing conceptually but not yet implemented:**
-- Social resonance filter (Radicle operations, peer sync, cherry-pick collaboration — the entire P2P layer)
-- Coherence beacon (ignite/detect beacon commits after dreamweaving)
 - Voice transcription pipeline (own the full lifecycle from spoken word to actionable text)
 - Canvas-submodule sync (bidirectional: canvas references ↔ git submodules)
 - Holarchic resonance management (downstream/upstream cherry-pick flows between sovereign repos and submodule clones)
@@ -63,7 +63,10 @@ AURYN/
         ├── spawn-chat.ts           # Session spawning
         ├── pop-out.ts              # Pop-out to sovereign
         ├── merge.ts                # Merge DreamNodes
-        └── liminal-web.ts          # Liminal web relationships
+        ├── liminal-web.ts          # Liminal web relationships
+        ├── social-resonance.ts     # Radicle ops + peer sync + collab memory
+        ├── cherry-pick.ts          # Cherry-pick workflow state machine
+        └── coherence-beacon.ts     # Beacon ignite/detect
 ```
 
 **Now**: AURYN imports InterBrain as submodule (for prototyping)
@@ -139,7 +142,7 @@ AURYN can assess the state of any DreamNode that contains submodules (like a pro
 
 The README is the always-current truth. When AURYN does a situational assessment, it reads the README first. If the README is stale, that's the first thing to fix.
 
-## MCP Tools (24 total)
+## MCP Tools (35 total)
 
 ### DreamNode Operations (4)
 | Tool | Description |
@@ -199,16 +202,36 @@ Note: Links are stored in Dreamer nodes' `liminal-web.json` as UUID arrays. Inte
 |------|-------------|
 | `merge_dreamnodes` | Merge two DreamNodes into one sovereign entity, preserving both git histories, updating all cross-references, and keeping ghost forks for backpropagation |
 
+### Social Resonance (3)
+| Tool | Description |
+|------|-------------|
+| `radicle_clone` | Clone a DreamNode from Radicle network by RID |
+| `radicle_publish` | Publish/share a DreamNode on the Radicle network |
+| `radicle_follow_peer` | Follow a peer DID, optionally add as delegate |
+
+### Peer Sync (3)
+| Tool | Description |
+|------|-------------|
+| `fetch_peer_commits` | Fetch new commits from all peer remotes |
+| `list_pending_commits` | List peer commits not yet accepted/rejected |
+| `read_collaboration_memory` | Read acceptance/rejection history for a Dreamer |
+
+### Cherry-Pick Workflow (5)
+| Tool | Description |
+|------|-------------|
+| `cherry_pick_preview` | Enter preview: stash local changes, cherry-pick, show diff |
+| `cherry_pick_accept` | Accept previewed commit, record in collaboration memory |
+| `cherry_pick_reject` | Reject previewed commit, record in collaboration memory |
+| `cherry_pick_cancel` | Cancel preview without recording |
+| `cherry_pick_status` | Get current workflow state (UI observability) |
+
+### Coherence Beacon (2)
+| Tool | Description |
+|------|-------------|
+| `ignite_beacon` | Create beacon commit after dreamweaving |
+| `detect_beacons` | Scan peer commits for beacon metadata |
+
 ### Not Yet Implemented
-
-**Social Resonance Filter (P2P collaboration — critical path):**
-- `radicle_init` / `radicle_clone` / `radicle_share` — Radicle network operations
-- `git_fetch_peers` / `git_cherry_pick_commit` / `git_push_to_remote` — peer sync
-- `list_pending_commits` — show what peers are offering
-
-**Coherence Beacon:**
-- `ignite_beacon` — create beacon commits in sovereign repos after weave
-- `detect_beacons` — scan incoming commits for beacon metadata
 
 **Dreamweaving (completing the stack):**
 - `sync_canvas_submodules` — bidirectional sync (canvas references ↔ git submodules)
@@ -231,10 +254,8 @@ Note: Links are stored in Dreamer nodes' `liminal-web.json` as UUID arrays. Inte
 ## Roadmap (Prioritized for Spring Launch)
 
 ### Next Up
-1. **Social resonance filter tools** — Radicle operations + cherry-pick collaboration (the P2P layer)
-2. **Coherence beacon** — trigger and detect after dreamweaving
-3. **Dreamweaving completion** — canvas-submodule sync (bidirectional enforcement of DreamSong-driven relationships)
-4. **Knowledge refactoring** — vault consolidation (the Spring Launch prerequisite)
+1. **Dreamweaving completion** — canvas-submodule sync (bidirectional enforcement of DreamSong-driven relationships)
+2. **Knowledge refactoring** — vault consolidation (the Spring Launch prerequisite)
 
 ### Medium Priority
 - Voice transcription pipeline (Whisper, local + remote modes)

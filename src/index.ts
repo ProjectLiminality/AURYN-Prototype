@@ -21,6 +21,9 @@ import { dreamweavingTools } from './tools/dreamweaving.js';
 import { popOutTools } from './tools/pop-out.js';
 import { liminalWebTools } from './tools/liminal-web.js';
 import { mergeTools } from './tools/merge.js';
+import { socialResonanceTools } from './tools/social-resonance.js';
+import { cherryPickTools } from './tools/cherry-pick.js';
+import { coherenceBeaconTools } from './tools/coherence-beacon.js';
 
 // Combine all tools
 const allTools = {
@@ -32,7 +35,10 @@ const allTools = {
   ...dreamweavingTools,
   ...popOutTools,
   ...liminalWebTools,
-  ...mergeTools
+  ...mergeTools,
+  ...socialResonanceTools,
+  ...cherryPickTools,
+  ...coherenceBeaconTools,
 };
 
 // Create MCP server
