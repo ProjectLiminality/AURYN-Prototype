@@ -298,6 +298,25 @@ export async function mergeDreamNodes(args: {
           const combinedReadme = `${oursReadme}\n\n---\n\n# Merged from: ${uddB.title}\n\n${theirsReadme}`;
           fs.writeFileSync(path.join(tempDir, 'README.md'), combinedReadme, 'utf-8');
           await execAsync('git add README.md', { cwd: tempDir });
+        } else if (file === 'liminal-web.json') {
+          // Union both liminal web relationship lists (deduplicated)
+          let linksA: string[] = [];
+          let linksB: string[] = [];
+          try {
+            const contentA = await gitShowStage(tempDir, 2, 'liminal-web.json');
+            if (contentA) linksA = (JSON.parse(contentA) as { relationships: string[] }).relationships || [];
+          } catch { /* empty */ }
+          try {
+            const contentB = await gitShowStage(tempDir, 3, 'liminal-web.json');
+            if (contentB) linksB = (JSON.parse(contentB) as { relationships: string[] }).relationships || [];
+          } catch { /* empty */ }
+          const unionLinks = [...new Set([...linksA, ...linksB])];
+          fs.writeFileSync(
+            path.join(tempDir, 'liminal-web.json'),
+            JSON.stringify({ relationships: unionLinks }, null, 2),
+            'utf-8'
+          );
+          await execAsync('git add -f liminal-web.json', { cwd: tempDir });
         } else {
           // Same-name files: keep A's version, rename B's with suffix
           const bContent = await gitShowStage(tempDir, 3, file);
@@ -318,6 +337,22 @@ export async function mergeDreamNodes(args: {
     }
 
     await execAsync('git remote remove ancestor-b', { cwd: tempDir });
+
+    // Always merge liminal-web.json from both sources (regardless of git conflict status).
+    // Read from original nodes to get the authoritative lists, then write the union.
+    {
+      const linksA = await LiminalWebService.readLinks(nodeA.path);
+      const linksB = await LiminalWebService.readLinks(nodeB.path);
+      const unionLinks = [...new Set([...linksA, ...linksB])];
+      if (unionLinks.length > 0) {
+        fs.writeFileSync(
+          path.join(tempDir, 'liminal-web.json'),
+          JSON.stringify({ relationships: unionLinks }, null, 2),
+          'utf-8'
+        );
+        await execAsync('git add -f liminal-web.json', { cwd: tempDir });
+      }
+    }
 
     // ========================================================================
     // Phase 4 — Set up C's identity
@@ -352,8 +387,22 @@ export async function mergeDreamNodes(args: {
       }
     }
 
-    // Write new .udd
-    const newUdd: UDDFile = {
+    // Write new .udd — preserve extra fields (email, DID, etc.) from both ancestors.
+    // Read raw JSON so we capture fields not modeled by UDDFile interface.
+    // B's extras go in first, then A's overwrite (A is primary), then canonical fields overwrite all.
+    let rawA: Record<string, unknown> = {};
+    let rawB: Record<string, unknown> = {};
+    try {
+      rawA = JSON.parse(fs.readFileSync(path.join(nodeA.path, '.udd'), 'utf-8'));
+    } catch { /* empty */ }
+    try {
+      rawB = JSON.parse(fs.readFileSync(path.join(nodeB.path, '.udd'), 'utf-8'));
+    } catch { /* empty */ }
+
+    const mergedUddRaw: Record<string, unknown> = {
+      ...rawB,
+      ...rawA,
+      // Canonical fields always overwrite
       uuid: newUuid,
       title: mergedName,
       type: mergedType,
@@ -361,7 +410,10 @@ export async function mergeDreamNodes(args: {
       submodules: mergedSubmodules,
       supermodules: mergedSupermodules,
     };
-    await UDDService.writeUDD(tempDir, newUdd);
+    // Remove stale radicleId — Phase 5 sets the new one
+    delete mergedUddRaw.radicleId;
+
+    fs.writeFileSync(path.join(tempDir, '.udd'), JSON.stringify(mergedUddRaw, null, 2), 'utf-8');
 
     // Write merge-ancestry.json
     const ancestry: MergeAncestryFile = {
@@ -403,9 +455,10 @@ export async function mergeDreamNodes(args: {
     // ========================================================================
     const radicleId = await initRadicle(tempDir, mergedDirName, `Merged DreamNode: ${mergedName}`);
     if (radicleId) {
-      const currentUdd = await UDDService.readUDD(tempDir);
-      currentUdd.radicleId = radicleId;
-      await UDDService.writeUDD(tempDir, currentUdd);
+      // Read-modify-write the raw .udd to preserve extra fields (email, DID, etc.)
+      const uddRaw = JSON.parse(fs.readFileSync(path.join(tempDir, '.udd'), 'utf-8'));
+      uddRaw.radicleId = radicleId;
+      fs.writeFileSync(path.join(tempDir, '.udd'), JSON.stringify(uddRaw, null, 2), 'utf-8');
       await commitAllChanges(tempDir, 'Add Radicle ID to merged DreamNode');
     }
 
