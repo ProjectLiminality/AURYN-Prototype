@@ -20,6 +20,7 @@ import { spawnChatTools } from './tools/spawn-chat.js';
 import { dreamweavingTools } from './tools/dreamweaving.js';
 import { popOutTools } from './tools/pop-out.js';
 import { liminalWebTools } from './tools/liminal-web.js';
+import { mergeTools } from './tools/merge.js';
 
 // Combine all tools
 const allTools = {
@@ -30,7 +31,8 @@ const allTools = {
   ...spawnChatTools,
   ...dreamweavingTools,
   ...popOutTools,
-  ...liminalWebTools
+  ...liminalWebTools,
+  ...mergeTools
 };
 
 // Create MCP server

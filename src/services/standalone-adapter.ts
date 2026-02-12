@@ -28,7 +28,7 @@ const execAsync = promisify(exec);
  * - "Mind-Body Connection" → "MindBodyConnection"
  * - "Café Philosophy" → "CafePhilosophy"
  */
-function sanitizeTitleToPascalCase(title: string): string {
+export function sanitizeTitleToPascalCase(title: string): string {
   return title
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -125,6 +125,44 @@ export interface SearchResult {
   node: DreamNodeInfo;
   score: number;
   snippet?: string;
+}
+
+// ============================================================================
+// MERGE ANCESTRY
+// Tracks the lineage of merged DreamNodes
+// ============================================================================
+
+export interface MergeAncestorEntry {
+  uuid: string;
+  title: string;
+  radicleId: string | null;
+  type: 'dream' | 'dreamer';
+  lastKnownPath: string;
+  mergeRole: 'primary' | 'secondary';
+}
+
+export interface MergeAncestryFile {
+  mergedAt: string;
+  ancestors: MergeAncestorEntry[];
+  mergeCommit: string;
+  mergedBy: string;
+}
+
+export class MergeAncestryService {
+  static read(dreamNodePath: string): MergeAncestryFile | null {
+    const filePath = path.join(dreamNodePath, 'merge-ancestry.json');
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      return JSON.parse(content) as MergeAncestryFile;
+    } catch {
+      return null;
+    }
+  }
+
+  static write(dreamNodePath: string, ancestry: MergeAncestryFile): void {
+    const filePath = path.join(dreamNodePath, 'merge-ancestry.json');
+    fs.writeFileSync(filePath, JSON.stringify(ancestry, null, 2), 'utf-8');
+  }
 }
 
 // ============================================================================

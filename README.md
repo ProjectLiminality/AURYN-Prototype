@@ -12,9 +12,9 @@ AURYN is three things at once:
 
 When you create a new DreamNode, AURYN gives itself to creation. The template copies, the new node inherits AURYN's essence while AURYN remains whole. The strange loop.
 
-## Current State (as of 2026-02-11)
+## Current State (as of 2026-02-12)
 
-AURYN is a fully functional MCP server with **21 tools** across 7 domains. All tools are implemented with proper error handling and graceful degradation (Ollama and Radicle failures are non-fatal). The codebase is clean TypeScript with zero TODOs or stubs.
+AURYN is a fully functional MCP server with **24 tools** across 9 domains. All tools are implemented with proper error handling and graceful degradation (Ollama and Radicle failures are non-fatal). The codebase is clean TypeScript with zero TODOs or stubs.
 
 **What works now:**
 - DreamNode CRUD (create, read, update, delete)
@@ -24,14 +24,23 @@ AURYN is a fully functional MCP server with **21 tools** across 7 domains. All t
 - Sub-agent loading (DreamNode as agent with scoped tools and cascading context)
 - Session spawning (open Claude Code in any DreamNode's context, macOS)
 - Liminal web relationships (Dream-to-Dreamer horizontal connections via liminal-web.json)
+- Pop-out to sovereign (promote local content to its own DreamNode with submodule replacement and DreamSong updates)
+- Merge DreamNodes (unify two nodes into one sovereign entity preserving both git histories and all cross-references)
 
 **What's crystallizing conceptually but not yet implemented:**
+- Social resonance filter (Radicle operations, peer sync, cherry-pick collaboration — the entire P2P layer)
+- Coherence beacon (ignite/detect beacon commits after dreamweaving)
+- Voice transcription pipeline (own the full lifecycle from spoken word to actionable text)
+- Canvas-submodule sync (bidirectional: canvas references ↔ git submodules)
 - Holarchic resonance management (downstream/upstream cherry-pick flows between sovereign repos and submodule clones)
 - Situational assessment as a native operation (pull latest submodule state → read DreamSong + READMEs + recent commits → produce status → update README)
-- Pop-out to sovereign (promote local content to its own DreamNode)
 - Knowledge refactoring (unstructured files → DreamNodes)
-- DreamTalk image intelligence (web retrieval, style references, meta-prompts)
+- DreamTalk image intelligence (symbol generation using DreamTalk library constraints, not generic AI images)
 - Vault-level meta-context (root README as life project dashboard)
+
+**Owned by other DreamNodes (not AURYN's territory):**
+- Publishing/distribution → PRISM (GitHub Pages, platform mirroring, torrent seeding)
+- DreamTalk symbol creation engine → DreamTalk (animation library, Cinema 4D backend)
 
 ## Architecture
 
@@ -44,14 +53,17 @@ AURYN/
 └── src/
     ├── index.ts                    # MCP server entry point
     ├── services/
-    │   └── standalone-adapter.ts   # All service implementations (~1140 lines)
+    │   └── standalone-adapter.ts   # All service implementations (~1180 lines)
     └── tools/
         ├── foundation.ts           # CRUD operations
         ├── submodule.ts            # Relationship management
         ├── semantic.ts             # Search operations
         ├── dreamweaving.ts         # Canvas generation
         ├── agent-loader.ts         # Sub-agent management
-        └── spawn-chat.ts           # Session spawning
+        ├── spawn-chat.ts           # Session spawning
+        ├── pop-out.ts              # Pop-out to sovereign
+        ├── merge.ts                # Merge DreamNodes
+        └── liminal-web.ts          # Liminal web relationships
 ```
 
 **Now**: AURYN imports InterBrain as submodule (for prototyping)
@@ -127,7 +139,7 @@ AURYN can assess the state of any DreamNode that contains submodules (like a pro
 
 The README is the always-current truth. When AURYN does a situational assessment, it reads the README first. If the README is stale, that's the first thing to fix.
 
-## MCP Tools (21 total)
+## MCP Tools (24 total)
 
 ### DreamNode Operations (4)
 | Tool | Description |
@@ -180,24 +192,54 @@ Note: Links are stored in Dreamer nodes' `liminal-web.json` as UUID arrays. Inte
 | Tool | Description |
 |------|-------------|
 | `spawn_chat` | Open Claude Code in a DreamNode's directory (macOS) |
-| `pop_out_to_sovereign` | Promote local content to sovereign DreamNode with submodule replacement (planned) |
+| `pop_out_to_sovereign` | Promote local content to sovereign DreamNode with submodule replacement, DreamSong path updates, and context branch creation |
+
+### Lifecycle (1)
+| Tool | Description |
+|------|-------------|
+| `merge_dreamnodes` | Merge two DreamNodes into one sovereign entity, preserving both git histories, updating all cross-references, and keeping ghost forks for backpropagation |
 
 ### Not Yet Implemented
-- **Situational assessment**: Pull submodule state → read DreamSong + READMEs → produce status report
-- **Submodule refresh**: Update all submodule pointers to latest sovereign state before assessment
-- **DreamTalk image intelligence**: Web retrieval for existing logos, style reference system, meta-prompt calibration
+
+**Social Resonance Filter (P2P collaboration — critical path):**
+- `radicle_init` / `radicle_clone` / `radicle_share` — Radicle network operations
+- `git_fetch_peers` / `git_cherry_pick_commit` / `git_push_to_remote` — peer sync
+- `list_pending_commits` — show what peers are offering
+
+**Coherence Beacon:**
+- `ignite_beacon` — create beacon commits in sovereign repos after weave
+- `detect_beacons` — scan incoming commits for beacon metadata
+
+**Dreamweaving (completing the stack):**
+- `sync_canvas_submodules` — bidirectional sync (canvas references ↔ git submodules)
+- `extract_relationships_from_canvas` — relationship graph from DreamSong
+
+**Voice Pipeline:**
+- Voice transcription (Whisper integration — own the full spoken-word-to-action lifecycle)
+
+**Other:**
+- Situational assessment — pull submodule state → read DreamSong + READMEs → produce status report
+- Submodule refresh — `git submodule update --remote` before assessment
+- DreamTalk image intelligence — symbol generation using DreamTalk library constraints
+- Knowledge refactoring — unstructured files → DreamNodes
+
+**Owned by other DreamNodes (not AURYN tools):**
+- GitHub Pages publishing → PRISM
+- Platform mirroring → PRISM
+- Torrent seeding → PRISM
 
 ## Roadmap (Prioritized for Spring Launch)
 
 ### Next Up
-1. **Pop-out to sovereign** — promote local files to DreamNodes with submodule replacement and DreamSong path updates
-2. **Situational assessment** — native "where are we?" operation for any DreamNode with submodules
-3. **Submodule refresh** — `git submodule update --remote` before any assessment
+1. **Social resonance filter tools** — Radicle operations + cherry-pick collaboration (the P2P layer)
+2. **Coherence beacon** — trigger and detect after dreamweaving
+3. **Dreamweaving completion** — canvas-submodule sync (bidirectional enforcement of DreamSong-driven relationships)
 4. **Knowledge refactoring** — vault consolidation (the Spring Launch prerequisite)
 
 ### Medium Priority
-- DreamTalk image intelligence (web retrieval, style references, meta-prompts)
-- DreamSong-inferred automatic submodule management (enforced pattern)
+- Voice transcription pipeline (Whisper, local + remote modes)
+- DreamTalk image intelligence (symbol generation, style references)
+- Situational assessment + submodule refresh
 - CLI tools (`auryn create`, `auryn search`, `auryn weave`)
 
 ### Future
