@@ -38,6 +38,7 @@ AURYN is a fully functional MCP server with **35 tools** across 13 domains. All 
 - Knowledge refactoring (unstructured files → DreamNodes)
 - DreamTalk image intelligence (symbol generation using DreamTalk library constraints, not generic AI images)
 - Vault-level meta-context (root README as life project dashboard)
+- Absorb merge (parent absorbs child submodule) — When merging A and B where B is a submodule of A, the merge should detect this parent-child relationship and handle it as absorption: ensure B's main is up-to-date with its submodule clone in A, remove the submodule, merge B's history into A, and update all other parents that had B as a submodule to now point at the merged A. This is the inverse of pop-out-to-sovereign: where pop-out promotes a local file to a sovereign DreamNode, absorb merge dissolves that sovereignty back into the parent. First real-world scenario: PRISM absorbing TorrentPlayer.
 
 **Owned by other DreamNodes (not AURYN's territory):**
 - Publishing/distribution → PRISM (GitHub Pages, platform mirroring, torrent seeding)
