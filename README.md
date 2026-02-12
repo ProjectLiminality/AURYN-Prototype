@@ -30,6 +30,7 @@ AURYN is a fully functional MCP server with **35 tools** across 13 domains. All 
 - Coherence beacon (ignite/detect beacon commits after dreamweaving)
 
 **What's crystallizing conceptually but not yet implemented:**
+- AURYN-native session spawning — The InterBrain's "open in Claude Code" button (currently a terminal icon on the selected DreamNode) should use AURYN's DreamTalk symbol instead, and by default spawn Claude Code in AURYN's directory (not the DreamNode's), with the selected DreamNode's README and DreamSong auto-loaded into context. This is the current best prototype of AURYN as its own thing — the agent always starts from AURYN's root with the relevant DreamNode context injected. Eventually "claude" gets replaced by "auryn" and sessions start at the vault root, but spawning into AURYN is the stepping stone.
 - Voice transcription pipeline (own the full lifecycle from spoken word to actionable text)
 - Canvas-submodule sync (bidirectional: canvas references ↔ git submodules)
 - Holarchic resonance management (downstream/upstream cherry-pick flows between sovereign repos and submodule clones)
