@@ -14,7 +14,7 @@ When you create a new DreamNode, AURYN gives itself to creation. The template co
 
 ## Current State (as of 2026-02-11)
 
-AURYN is a fully functional MCP server with **18 tools** across 6 domains. All tools are implemented with proper error handling and graceful degradation (Ollama and Radicle failures are non-fatal). The codebase is clean TypeScript with zero TODOs or stubs.
+AURYN is a fully functional MCP server with **21 tools** across 7 domains. All tools are implemented with proper error handling and graceful degradation (Ollama and Radicle failures are non-fatal). The codebase is clean TypeScript with zero TODOs or stubs.
 
 **What works now:**
 - DreamNode CRUD (create, read, update, delete)
@@ -23,6 +23,7 @@ AURYN is a fully functional MCP server with **18 tools** across 6 domains. All t
 - DreamSong weaving and reading (Obsidian canvas format)
 - Sub-agent loading (DreamNode as agent with scoped tools and cascading context)
 - Session spawning (open Claude Code in any DreamNode's context, macOS)
+- Liminal web relationships (Dream-to-Dreamer horizontal connections via liminal-web.json)
 
 **What's crystallizing conceptually but not yet implemented:**
 - Holarchic resonance management (downstream/upstream cherry-pick flows between sovereign repos and submodule clones)
@@ -126,7 +127,7 @@ AURYN can assess the state of any DreamNode that contains submodules (like a pro
 
 The README is the always-current truth. When AURYN does a situational assessment, it reads the README first. If the README is stale, that's the first thing to fix.
 
-## MCP Tools (18 total)
+## MCP Tools (21 total)
 
 ### DreamNode Operations (4)
 | Tool | Description |
@@ -145,6 +146,15 @@ The README is the always-current truth. When AURYN does a situational assessment
 | `sync_context` | Regenerate `.claude/submodule-context.md` with @imports for all submodule READMEs |
 
 Note: `add_submodule` and `remove_submodule` are low-level primitives. The intended flow is DreamSong-driven: weave a DreamSong → submodule relationships are inferred as a downstream effect.
+
+### Liminal Web (3)
+| Tool | Description |
+|------|-------------|
+| `add_liminal_link` | Add a horizontal link between a Dreamer and another DreamNode |
+| `remove_liminal_link` | Remove a liminal web link |
+| `list_liminal_links` | List all connections for a DreamNode (Dreamer: direct read; Dream: scans all Dreamers) |
+
+Note: Links are stored in Dreamer nodes' `liminal-web.json` as UUID arrays. Interpreted as bidirectional — only Dreamers hold the data.
 
 ### Semantic Search (3)
 | Tool | Description |
@@ -173,7 +183,6 @@ Note: `add_submodule` and `remove_submodule` are low-level primitives. The inten
 | `pop_out_to_sovereign` | Promote local content to sovereign DreamNode with submodule replacement (planned) |
 
 ### Not Yet Implemented
-- **Liminal web relationships**: No tool for horizontal dream-to-dreamer connections without submodules
 - **Situational assessment**: Pull submodule state → read DreamSong + READMEs → produce status report
 - **Submodule refresh**: Update all submodule pointers to latest sovereign state before assessment
 - **DreamTalk image intelligence**: Web retrieval for existing logos, style reference system, meta-prompt calibration
@@ -189,7 +198,6 @@ Note: `add_submodule` and `remove_submodule` are low-level primitives. The inten
 ### Medium Priority
 - DreamTalk image intelligence (web retrieval, style references, meta-prompts)
 - DreamSong-inferred automatic submodule management (enforced pattern)
-- Liminal web relationship tooling
 - CLI tools (`auryn create`, `auryn search`, `auryn weave`)
 
 ### Future

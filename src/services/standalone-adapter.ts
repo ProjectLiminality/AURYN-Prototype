@@ -709,6 +709,46 @@ export class DreamNodeService {
   }
 }
 
+// ============================================================================
+// LIMINAL WEB SERVICE
+// Reads/writes liminal-web.json files inside Dreamer nodes
+// ============================================================================
+
+export class LiminalWebService {
+  static async readLinks(dreamerPath: string): Promise<string[]> {
+    const filePath = path.join(dreamerPath, 'liminal-web.json');
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const data = JSON.parse(content) as { relationships: string[] };
+      return data.relationships || [];
+    } catch {
+      return [];
+    }
+  }
+
+  static async writeLinks(dreamerPath: string, links: string[]): Promise<void> {
+    const filePath = path.join(dreamerPath, 'liminal-web.json');
+    fs.writeFileSync(filePath, JSON.stringify({ relationships: links }, null, 2), 'utf-8');
+  }
+
+  static async addLink(dreamerPath: string, targetUuid: string): Promise<boolean> {
+    const links = await this.readLinks(dreamerPath);
+    if (links.includes(targetUuid)) return false;
+    links.push(targetUuid);
+    await this.writeLinks(dreamerPath, links);
+    return true;
+  }
+
+  static async removeLink(dreamerPath: string, targetUuid: string): Promise<boolean> {
+    const links = await this.readLinks(dreamerPath);
+    const index = links.indexOf(targetUuid);
+    if (index === -1) return false;
+    links.splice(index, 1);
+    await this.writeLinks(dreamerPath, links);
+    return true;
+  }
+}
+
 /**
  * Standalone Submodule Service
  * Uses InterBrain's git-utils for git operations
