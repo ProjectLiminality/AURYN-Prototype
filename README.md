@@ -35,7 +35,7 @@ AURYN is a fully functional MCP server with **35 tools** across 13 domains. All 
 - Canvas-submodule sync (bidirectional: canvas references ↔ git submodules)
 - Holarchic resonance management (downstream/upstream cherry-pick flows between sovereign repos and submodule clones)
 - Situational assessment as a native operation (pull latest submodule state → read DreamSong + READMEs + recent commits → produce status → update README)
-- Knowledge refactoring (unstructured files → DreamNodes)
+- Knowledge refactoring (unstructured files → DreamNodes) — Type A consolidation (existing repos → RealDealVault) is complete (494 nodes). Type B (unstructured content like SecondBrain → DreamNodes) is next, with operational patterns established and benchmark dataset identified. System prompt + custom tooling crystallizing through learning-by-doing.
 - DreamTalk image intelligence (symbol generation using DreamTalk library constraints, not generic AI images)
 - Vault-level meta-context (root README as life project dashboard)
 - Absorb merge (parent absorbs child submodule) — When merging A and B where B is a submodule of A, the merge should detect this parent-child relationship and handle it as absorption: ensure B's main is up-to-date with its submodule clone in A, remove the submodule, merge B's history into A, and update all other parents that had B as a submodule to now point at the merged A. This is the inverse of pop-out-to-sovereign: where pop-out promotes a local file to a sovereign DreamNode, absorb merge dissolves that sovereignty back into the parent. First real-world scenario: PRISM absorbing TorrentPlayer.
@@ -131,6 +131,37 @@ The final state is the same as if the DreamNode had always existed externally: s
 ### Knowledge Refactoring (Unstructured → DreamNodes)
 
 Point AURYN at any file path — a folder, a Notion export, a CSV dump, an existing Obsidian vault. AURYN creates DreamNodes with minimum viable structure, just enough for dreamweaving compatibility. Through ongoing knowledge gardening, finer structure emerges naturally. Pop-out happens when a piece is ready for sovereignty.
+
+**The end goal**: the InterBrain installation process allows users to point to their existing vault(s). AURYN consolidates, purifies, and refactors their knowledge base into DreamNodes, keeping old data as backups. No risk, full reversibility.
+
+#### Learnings from Vault Consolidation (Jan-Feb 2026)
+
+Four consolidation sessions migrated ~494 DreamNodes into RealDealVault from 12 source vaults. This established the operational patterns. Key insights:
+
+**Two fundamentally different problems:**
+- **Type A (completed)**: Mapping existing DreamNode repos from old vaults — mechanical (add `.udd`, Radicle ID, move directories). Solved with batch conversion in groups of ~25 with verification between batches.
+- **Type B (not started)**: Refactoring unstructured content (Obsidian PKM vaults, markdown files, mixed personal data) into DreamNodes. Requires AI intelligence to determine what becomes what. The SecondBrain directory (99 items) is the benchmark dataset for this.
+
+**Operational patterns that proved reliable:**
+- Idempotent conversion — check what exists, only fill gaps, safe to rerun
+- Move-to-trash over delete — organized by cleanup type and date
+- DreamTalk media auto-detection (MP4 > GIF > PNG > JPEG > PDF > SVG, smaller preferred)
+- Pre-cleanup phase first (remove editor artifacts, legacy metadata, empty dirs) before conversion
+- Schema validation on `.udd` creation (the `dreamTalkMedia` vs `dreamTalk` inconsistency affected 33 files mid-batch)
+
+**Intelligence required for Type B:**
+- **Deduplication requires judgment, not just hashing** — deciding which version of a concept is "richer" (more content, more recent, better DreamTalk) is a creative decision
+- **Dreamer nodes need special merge logic** — liminal-web.json must be unioned, not overwritten; images may need merging from multiple sources
+- **Content classification** — standalone markdown → likely 1:1 DreamNode; structured directories → may be DreamNode-ready or need decomposition; personal/financial docs → may not belong as public DreamNodes; untitled stubs → noise to clean up; duplicates of existing DreamNodes → dedup needed
+- **Thematic clustering** — topics naturally migrate in related clusters (e.g., all UAP-related nodes together); the tool should support cluster-based import
+- **The consolidation process itself is a knowledge gardening act** — deciding what deserves sovereignty encodes understanding. Surface these decisions to the user rather than automating them away
+
+**What the benchmark dataset (SecondBrain) contains:**
+99 items including standalone idea files (A T A R A X I A.md, Dialectic.md, Miracle Consciousness.md), structured project directories (ABRAXAS, AntiGravityBong, Books, DailyNotes), personal documents (consulting bookkeeping, loan agreements), Obsidian infrastructure (Attachments, Templater, DailyNotes), and duplicates of existing DreamNodes (InterBrain.md, Project Liminality.md). This is representative of what normal users with an existing Second Brain will bring.
+
+**Post-conversion cleanup is significant** — validation should be built into the flow, not an afterthought. Branch naming (`master` vs `main`), bad Radicle IDs, and edge cases in repos without commits all surfaced at scale.
+
+**The consolidation process stress-tests the system** — scaling from 50 to 167 nodes revealed localStorage limits in the InterBrain plugin (Session 2). The SecondBrain consolidation will likely reveal new edge cases in AURYN's tooling. That's a feature — each round of consolidation teaches the system about itself.
 
 ### Situational Assessment
 
@@ -257,7 +288,7 @@ Note: Links are stored in Dreamer nodes' `liminal-web.json` as UUID arrays. Inte
 
 ### Next Up
 1. **Dreamweaving completion** — canvas-submodule sync (bidirectional enforcement of DreamSong-driven relationships)
-2. **Knowledge refactoring** — vault consolidation (the Spring Launch prerequisite)
+2. **Knowledge refactoring** — SecondBrain consolidation as benchmark (Type B: unstructured → DreamNodes). Learning-by-doing to crystallize system prompt + custom tooling. End goal: InterBrain installation can absorb existing vaults.
 
 ### Medium Priority
 - Voice transcription pipeline (Whisper, local + remote modes)
