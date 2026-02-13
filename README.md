@@ -35,7 +35,8 @@ AURYN is a fully functional MCP server with **35 tools** across 13 domains. All 
 - Canvas-submodule sync (bidirectional: canvas references ↔ git submodules)
 - Holarchic resonance management (downstream/upstream cherry-pick flows between sovereign repos and submodule clones)
 - Situational assessment as a native operation (pull latest submodule state → read DreamSong + READMEs + recent commits → produce status → update README)
-- Knowledge refactoring (unstructured files → DreamNodes) — Type A consolidation (existing repos → RealDealVault) is complete (494 nodes). Type B (unstructured content like SecondBrain → DreamNodes) is next, with operational patterns established and benchmark dataset identified. System prompt + custom tooling crystallizing through learning-by-doing.
+- Knowledge refactoring (unstructured knowledge → DreamNodes) — Type A consolidation (existing repos → RealDealVault) is complete (494 nodes). Type B (unstructured content like SecondBrain → DreamNodes) is next, with operational patterns established and benchmark dataset identified. System prompt + custom tooling crystallizing through learning-by-doing. But the vision goes far beyond file systems — AURYN should be pointable at any knowledge silo: forums, archives, interview collections, web-based knowledge repositories. The core operation is always the same: take a monolithic block of knowledge with crude or unintuitive internal structure (categories, document lists, thread hierarchies) and refactor it into memetic holons — sovereign DreamNodes structured through DreamSongs into holarchies that mirror how the mind actually relates to knowledge. AURYN doesn't need to one-shot this perfectly; it provides an initial skeleton that human collective intelligence refines through merge, pop-out, and ongoing gardening. Two high-signal target repositories: **InPower Movement** (forum with decades of condensed research, much of it transferred through interviews) and **Disclosure Project Intelligence Archive** (extremely high signal but hard to navigate due to conventional file/category management).
+- Songlines (spoken word → DreamNode clips) — AURYN territory, not just InterBrain. The spoken word interview modality is where enormous amounts of high-signal knowledge lives (podcasts, expert interviews, forum video content). AURYN needs to master this: transcription → concept extraction → clip identification → consolidation of clips from many interviews into the DreamNodes that represent those concepts. This is the deep knowledge refactoring capability for audio/video content. One subject matter expert interviewed across dozens of sessions contains a goldmine — AURYN should be able to structure that into navigable, composable, collaborative DreamNodes. Connects to the voice transcription pipeline but goes further: not just real-time copilot listening, but batch processing of existing interview archives.
 - DreamTalk image intelligence (symbol generation using DreamTalk library constraints, not generic AI images)
 - Vault-level meta-context (root README as life project dashboard)
 - Absorb merge (parent absorbs child submodule) — When merging A and B where B is a submodule of A, the merge should detect this parent-child relationship and handle it as absorption: ensure B's main is up-to-date with its submodule clone in A, remove the submodule, merge B's history into A, and update all other parents that had B as a submodule to now point at the merged A. This is the inverse of pop-out-to-sovereign: where pop-out promotes a local file to a sovereign DreamNode, absorb merge dissolves that sovereignty back into the parent. First real-world scenario: PRISM absorbing TorrentPlayer.
@@ -128,11 +129,19 @@ The inverse of importing: content that starts as a local file inside a DreamNode
 
 The final state is the same as if the DreamNode had always existed externally: sovereign repo, submodule clone with context branch, correct DreamSong paths. This is how knowledge gardens grow — not in size, but in interconnectedness.
 
-### Knowledge Refactoring (Unstructured → DreamNodes)
+### Knowledge Refactoring (Unstructured Knowledge → DreamNodes)
 
-Point AURYN at any file path — a folder, a Notion export, a CSV dump, an existing Obsidian vault. AURYN creates DreamNodes with minimum viable structure, just enough for dreamweaving compatibility. Through ongoing knowledge gardening, finer structure emerges naturally. Pop-out happens when a piece is ready for sovereignty.
+Point AURYN at any knowledge source — a folder, a Notion export, a CSV dump, an existing Obsidian vault, a forum, an archive, a collection of interviews. AURYN creates DreamNodes with minimum viable structure, just enough for dreamweaving compatibility. Through ongoing knowledge gardening, finer structure emerges naturally. Pop-out happens when a piece is ready for sovereignty.
 
-**The end goal**: the InterBrain installation process allows users to point to their existing vault(s). AURYN consolidates, purifies, and refactors their knowledge base into DreamNodes, keeping old data as backups. No risk, full reversibility.
+**The core transformation**: Take a monolithic knowledge silo — a forum with thousands of threads, an archive with bureaucratic category structures, a series of expert interviews — and refactor it into memetic holons. Each concept that stands on its own becomes a sovereign DreamNode. These are then structured through DreamSongs into holarchies that mirror how the mind actually relates to that knowledge. The result: the surface area for knowledge transfer explodes. What was one huge opaque block becomes hundreds of composable, navigable, collaboratively refinable units.
+
+**Why this matters**: Conventional knowledge management (categories, document lists, thread hierarchies, file names) is not how the human mind relates to knowledge natively. A forum is a silo — one member mastering the material doesn't automatically make it easier for others to digest. But when that knowledge is refactored into DreamNodes, each piece becomes a unit of collaboration and clarification. The collective intelligence of the community can work on the actual knowledge topology rather than fighting the container's structure.
+
+**AURYN doesn't need to one-shot this**: The initial refactoring provides a skeleton — an ever-more-helpful starting point. From there, human collective intelligence refines: merge these two, pop this out, this is actually its own thing. Each round of refactoring teaches the system about itself.
+
+**The spoken word dimension**: Enormous amounts of high-signal knowledge lives in interviews and podcasts. Subject matter experts get interviewed repeatedly across dozens of sessions, explaining concepts, presenting research, going deep on specifics. AURYN should be able to process these: transcript → concept extraction → clip identification → consolidation of clips from many interviews into the DreamNodes that represent those concepts. This is the Songlines feature applied to knowledge refactoring — not just real-time copilot listening, but batch processing of existing spoken-word archives.
+
+**The end goal**: the InterBrain installation process allows users to point to their existing knowledge sources — vaults, forums, archives, interview collections. AURYN consolidates, purifies, and refactors their knowledge base into DreamNodes, keeping old data as backups. No risk, full reversibility. One person with high conceptual clarity about a knowledge landscape's topology can infuse that understanding into an ever-more-refined system prompt for the refactoring process. Once community collective intelligence starts applying and refining it, the capability compounds.
 
 #### Learnings from Vault Consolidation (Jan-Feb 2026)
 
@@ -270,14 +279,21 @@ Note: Links are stored in Dreamer nodes' `liminal-web.json` as UUID arrays. Inte
 - `sync_canvas_submodules` — bidirectional sync (canvas references ↔ git submodules)
 - `extract_relationships_from_canvas` — relationship graph from DreamSong
 
-**Voice Pipeline:**
+**Voice Pipeline & Songlines:**
 - Voice transcription (Whisper integration — own the full spoken-word-to-action lifecycle)
+- Real-time copilot listening — surface relevant DreamNodes during live conversations, summarize afterwards
+- Clip extraction — identify and clip relevant segments from conversations, associate clips with DreamNodes
+- Batch transcript processing — ingest interview archives, extract concepts, consolidate clips from many sources into concept-level DreamNodes
+
+**Knowledge Refactoring:**
+- Unstructured files → DreamNodes (Type B: SecondBrain benchmark)
+- Forum/archive ingestion — point at web-based knowledge repositories, parse structure, refactor into DreamNodes
+- Transcript-to-DreamNode pipeline — process interview collections into concept-level DreamNodes with associated clips
 
 **Other:**
 - Situational assessment — pull submodule state → read DreamSong + READMEs → produce status report
 - Submodule refresh — `git submodule update --remote` before assessment
 - DreamTalk image intelligence — symbol generation using DreamTalk library constraints
-- Knowledge refactoring — unstructured files → DreamNodes
 
 **Owned by other DreamNodes (not AURYN tools):**
 - GitHub Pages publishing → PRISM
@@ -288,10 +304,11 @@ Note: Links are stored in Dreamer nodes' `liminal-web.json` as UUID arrays. Inte
 
 ### Next Up
 1. **Dreamweaving completion** — canvas-submodule sync (bidirectional enforcement of DreamSong-driven relationships)
-2. **Knowledge refactoring** — SecondBrain consolidation as benchmark (Type B: unstructured → DreamNodes). Learning-by-doing to crystallize system prompt + custom tooling. End goal: InterBrain installation can absorb existing vaults.
+2. **Knowledge refactoring** — SecondBrain consolidation as benchmark (Type B: unstructured → DreamNodes). Learning-by-doing to crystallize system prompt + custom tooling. End goal: InterBrain installation can absorb any knowledge source (vaults, forums, archives, interview collections).
 
 ### Medium Priority
-- Voice transcription pipeline (Whisper, local + remote modes)
+- Songlines & voice pipeline (Whisper transcription, clip extraction, batch transcript processing, real-time copilot listening)
+- Forum/archive ingestion (web-based knowledge repositories → DreamNodes)
 - DreamTalk image intelligence (symbol generation, style references)
 - Situational assessment + submodule refresh
 - CLI tools (`auryn create`, `auryn search`, `auryn weave`)
@@ -300,7 +317,7 @@ Note: Links are stored in Dreamer nodes' `liminal-web.json` as UUID arrays. Inte
 - Spacebar/Dialogos mode (voice-driven intent recognition)
 - Architecture flip (InterBrain imports AURYN)
 - Cross-platform spawn_chat (Linux/Windows)
-- Real-time conversational co-pilot integration
+- Deep knowledge refactoring at scale (InPower Movement forum, Disclosure Project Intelligence Archive, and similar high-signal repositories)
 
 ## Setup
 
