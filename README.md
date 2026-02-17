@@ -1,8 +1,12 @@
 # AURYN
 
-AURYN is the agentic layer of DreamOS. Named after the Ouroboros amulet from The Neverending Story - "Do what you will."
+AURYN is the cultivation layer of DreamOS. Named after the Ouroboros amulet from The Neverending Story - "Do what you will."
 
 ## What AURYN Is
+
+AURYN is a **knowledge topology and cultivation system**, not an agentic framework. This distinction is fundamental.
+
+The entire AI industry is building better execution tools — faster coding agents, more autonomous frameworks, better tool orchestration. AURYN is orthogonal to all of this. It occupies the **vision-to-maturity lifecycle**: planting seeds (creating DreamNodes), nurturing soil (growing READMEs through conversation and reflection), weaving relationships (DreamSongs), and collective gardening (cherry-pick sovereignty, liminal web, coherence beacons).
 
 AURYN is three things at once:
 
@@ -11,6 +15,41 @@ AURYN is three things at once:
 3. **The interface** - MCP tools / CLI for AI agents to work with DreamNodes
 
 When you create a new DreamNode, AURYN gives itself to creation. The template copies, the new node inherits AURYN's essence while AURYN remains whole. The strange loop.
+
+### Transcend and Include
+
+AURYN's relationship to agentic frameworks (Claude Code, OpenCode, Codex CLI, OpenClaw, and whatever emerges tomorrow) follows the principle: **don't compete, transcend and include.**
+
+The core four of the agentic age are: **context, model, prompt, tools.** DreamNodes are universal vehicles containing any conceivable form of tools (CLI), context (files), and prompts (also files). These are orthogonal to agentic shells — any shell can work with DreamNodes.
+
+The architectural test: **if a new capability announced tomorrow causes anxiety rather than excitement, you're building at the wrong layer.** AURYN is positioned so that every improvement in execution tools makes cultivation more valuable, not less:
+
+- Better coding agents → visions in the system reach harvest faster
+- Always-on daemons → AURYN's situational assessment becomes ambient
+- New agentic frameworks → more tools AURYN can spawn at harvest time
+- Faster/cheaper inference → AURYN's knowledge refactoring becomes more powerful
+
+AURYN builds the **soil**, not the **tractor**. Every better tractor is good news.
+
+### Cultivation vs. Harvest
+
+The system splits cleanly along the **vision → strategy** boundary:
+
+**AURYN's domain (cultivation):** Listening to spoken word, parsing stream of consciousness, growing READMEs, weaving DreamSongs, decomposing and recomposing visions into sub/supermodules, routing insights to the right DreamNodes, managing the relational graph of how dreams connect. This is the planting and nurturing phase. Spoken word is AURYN's native modality — stream of consciousness → structured DreamNodes is something no agentic framework is attempting.
+
+**Not AURYN's domain (harvest):** When a vision crosses the maturity threshold — when the README is rich enough, the DreamSong relationships are clear, the intent is crystallized — hand it to whatever cutting-edge execution tool exists. AURYN opens the door, provides the context, steps aside. It can spawn the session, but the execution engine is whatever the user prefers.
+
+The harvest moment is the natural handoff point. AURYN doesn't need to be the execution tool. It needs to have grown such clear, rich context that whatever agent picks it up can run with it effectively. The README and DreamSong are the handoff artifacts.
+
+### Monetization Architecture
+
+AURYN's value is the cultivation layer itself, completely decoupled from any specific agentic shell:
+
+- **BYOK tier** — bring your own API keys, use any shell you want, everything open, no restrictions
+- **Managed convenience tier** — non-technical users pay through Stripe, AURYN handles inference costs for its own operations (semantic search, summarization, spoken word parsing, DreamTalk generation) with a markup that supports the project
+- **The user's shell choice is orthogonal** — AURYN never charges for or gates access to execution tools. Users bring their own Claude Code subscription, their own Cursor license, whatever they prefer
+
+The token service is a convenience store attached to the garden. You don't need to grow the food to run the store, and you don't need the store to grow food. They're naturally decoupled. This means AURYN can position itself universally — it benefits from any tool's improvement because it sits at the layer above.
 
 ## Current State (as of 2026-02-12)
 
@@ -364,12 +403,21 @@ Requires Ollama with `nomic-embed-text` for semantic search (optional — fuzzy 
 
 ## Philosophy
 
-README is the universal memory format:
-- **Agent-agnostic**: Works with any AI
-- **Human-readable**: Just markdown
-- **Git-versioned**: Full history
-- **Composable**: Submodules cascade context
+### The Universal Principle
+
+Build at the layer where more capability below you is unambiguously good news. If an announcement below your layer causes anxiety, you're building at the wrong layer. If it causes excitement, you're in the right place.
+
+AURYN is a knowledge topology. No agentic framework is building this — they don't care about DreamNodes, DreamSongs, holarchic submodule relationships, cherry-pick sovereignty, coherence beacons, or the liminal web. They care about tool routing, context windows, and permission models. These concerns are complementary, not competitive.
+
+The knowledge gardening layer is deeply human, inherently social, and resistant to pure automation. Someone with well-structured DreamNodes and rich DreamSongs gets dramatically better results from *any* agentic framework than someone with a flat folder of markdown files. AURYN is what makes every tool more effective.
+
+### README as Universal Memory
+
+- **Agent-agnostic**: Works with any AI — not coupled to any shell or provider
+- **Human-readable**: Just markdown — the format that survives every platform shift
+- **Git-versioned**: Full history — sovereignty through distributed version control
+- **Composable**: Submodules cascade context — holarchic structure is native
 
 The sophistication ceiling has been removed. In the agentic age, system design is no longer constrained by user operability. AURYN holds the knowledge of how collective dreamweaving works and operates it on your behalf. Users interact through natural language. AURYN does the gardening.
 
-AURYN gives itself to every DreamNode. The Ouroboros - creating itself endlessly.
+AURYN gives itself to every DreamNode. The Ouroboros — creating itself endlessly.
