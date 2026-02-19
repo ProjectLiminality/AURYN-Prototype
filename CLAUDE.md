@@ -20,6 +20,4 @@ When working through AURYN, these principles are already internalized - users do
 
 InterBrain defines what DreamNodes are, how they relate (submodules, liminal web), and the broader vision they serve. This is the source of truth for AURYN's domain model.
 
-When AURYN needs to understand DreamNode structure, relationships, or the InterBrain's feature architecture, this submodule is the reference.
-
-@InterBrain/README.md
+When AURYN needs to understand DreamNode structure, relationships, or the InterBrain's feature architecture, the InterBrain DreamNode (at vault root) is the reference. The InterBrain submodule was removed from AURYN — it served its prototyping purpose and now lives independently.
