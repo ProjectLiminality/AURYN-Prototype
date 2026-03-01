@@ -37,13 +37,17 @@
   .msg.assistant {
     align-self: flex-start; width: 100%; position: relative; padding: 0;
   }
+  .msg.transcript {
+    align-self: flex-start; width: 100%; position: relative; padding: 0;
+  }
 
   /* The rendered markdown text layer */
-  .msg.assistant .text-layer {
+  .msg.assistant .text-layer, .msg.transcript .text-layer {
     font-family: 'TeX Gyre Termes', Georgia, serif;
     font-size: 20px; color: #fff; line-height: 1.6;
     word-wrap: break-word;
   }
+  .msg.transcript .text-layer { color: #b0b0b0; }
   .msg.assistant .text-layer p { margin-bottom: 0.6em; }
   .msg.assistant .text-layer p:last-child { margin-bottom: 0; }
   .msg.assistant .text-layer strong { font-weight: bold; }
@@ -60,11 +64,11 @@
   }
 
   /* SVG animation overlay — positioned over the text layer */
-  .msg.assistant .svg-overlay {
+  .msg.assistant .svg-overlay, .msg.transcript .svg-overlay {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%;
     pointer-events: none; z-index: 1;
   }
-  .msg.assistant .svg-overlay svg {
+  .msg.assistant .svg-overlay svg, .msg.transcript .svg-overlay svg {
     width: 100%; height: 100%; display: block;
   }
 
@@ -89,6 +93,9 @@
   .char-path-fill {
     fill: #fff; fill-opacity: 0; stroke: none;
   }
+  /* Transcript uses muted color */
+  .msg.transcript .char-path-stroke { stroke: #b0b0b0; }
+  .msg.transcript .char-path-fill { fill: #b0b0b0; }
 
   #input-area {
     padding: 12px 16px; border-top: 1px solid #1a1a1a;
@@ -105,7 +112,7 @@
   #input-area textarea:focus { border-color: #555; }
   #input-area textarea::placeholder { color: #444; }
 
-  #send-btn, #stop-btn {
+  #send-btn, #stop-btn, #mic-btn {
     width: 42px; height: 42px; border-radius: 50%; border: none;
     cursor: pointer; display: flex; align-items: center;
     justify-content: center; flex-shrink: 0;
@@ -115,6 +122,11 @@
   #send-btn svg { width: 18px; height: 18px; }
   #stop-btn { background: #8B0000; color: #fff; display: none; }
   #stop-btn svg { width: 16px; height: 16px; }
+  #mic-btn { background: #222; color: #888; }
+  #mic-btn:disabled { opacity: 0.3; cursor: default; }
+  #mic-btn svg { width: 18px; height: 18px; }
+  #mic-btn.recording { background: #8B0000; color: #fff; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
 
   #fallback-msg {
     display: none; position: absolute; top: 50%; left: 50%;
@@ -122,12 +134,41 @@
     color: #444; font-size: 16px; line-height: 1.6;
   }
   #fallback-msg .accent { color: #FFD700; }
+
+  /* Drag-and-drop overlay */
+  #drop-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.8); z-index: 100;
+    border: 3px dashed #FFD700;
+    flex-direction: column; align-items: center; justify-content: center;
+    color: #FFD700; font-size: 20px;
+  }
+  #drop-overlay.active { display: flex; }
+
+  /* Transcript label */
+  .transcript-label {
+    font-size: 11px; color: #555; margin-bottom: 4px;
+    font-family: -apple-system, sans-serif;
+  }
+
+  /* Connection status indicator */
+  #connection-status {
+    display: none; padding: 4px 16px; background: #0a0a0a;
+    border-bottom: 1px solid #1a1a1a; font-size: 11px;
+    font-family: -apple-system, sans-serif; color: #555;
+  }
+  #connection-status.connected { color: #4a7a4a; }
+  #connection-status.disconnected { color: #7a4a4a; }
 </style>
 </head>
 <body>
+<div id="connection-status"></div>
 <div id="messages"></div>
 <div id="input-area">
   <textarea id="input" rows="1" placeholder="Talk to AURYN..." autofocus></textarea>
+  <button id="mic-btn" title="Record voice">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+  </button>
   <button id="send-btn" title="Send">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
   </button>
@@ -135,6 +176,7 @@
     <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
   </button>
 </div>
+<div id="drop-overlay">Drop audio file to transcribe</div>
 <div id="fallback-msg">
   Open in the <span class="accent">InterBrain</span> to chat with AURYN
 </div>
@@ -150,7 +192,10 @@ const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('input');
 const sendBtn = document.getElementById('send-btn');
 const stopBtn = document.getElementById('stop-btn');
+const micBtn = document.getElementById('mic-btn');
 const fallbackEl = document.getElementById('fallback-msg');
+const dropOverlay = document.getElementById('drop-overlay');
+const connectionStatus = document.getElementById('connection-status');
 
 let conversation = [];
 let isStreaming = false;
@@ -158,6 +203,13 @@ let currentRequestId = null;
 let font = null;
 let fontLoaded = false;
 let aiBridgeReady = false;
+let standaloneMode = false;
+
+// Transcription state
+let isRecording = false;
+let mediaRecorder = null;
+let transcriptionWs = null;
+let transcriptMsg = null; // the active transcript message object
 
 const SYSTEM_PROMPT = `You are AURYN, the cultivation layer of DreamOS. Named after the Ouroboros amulet from The Neverending Story — "Do what you will."
 
@@ -170,6 +222,7 @@ Keep responses concise and grounded. Use metaphor when it illuminates, not to ob
 // ============================================================
 const instanceId = crypto.randomUUID();
 
+// postMessage handler for iframe AI bridge
 window.addEventListener('message', (e) => {
   const d = e.data;
   if (!d || !d.type) return;
@@ -177,7 +230,7 @@ window.addEventListener('message', (e) => {
   if (d.type === 'ai-bridge-ready') {
     if (d.instanceId && d.instanceId !== instanceId) return;
     aiBridgeReady = true;
-    console.log('[AURYN] AI bridge ready (v' + d.version + ')');
+    console.log('[AURYN] AI bridge ready via iframe (v' + d.version + ')');
     fallbackEl.style.display = 'none';
     messagesEl.style.display = '';
     document.getElementById('input-area').style.display = '';
@@ -195,18 +248,38 @@ window.addEventListener('message', (e) => {
   }
 });
 
-fallbackEl.style.display = 'block';
-document.getElementById('input-area').style.display = 'none';
-messagesEl.style.display = 'none';
+// Check if we're inside an iframe (InterBrain) or standalone
+const isInIframe = window.parent !== window;
 
-window.parent.postMessage({ type: 'ai-bridge-probe', instanceId }, '*');
-setTimeout(() => {
-  if (!aiBridgeReady) {
-    console.log('[AURYN] No AI bridge — standalone mode');
-  }
-}, 500);
+if (isInIframe) {
+  fallbackEl.style.display = 'block';
+  document.getElementById('input-area').style.display = 'none';
+  messagesEl.style.display = 'none';
+
+  window.parent.postMessage({ type: 'ai-bridge-probe', instanceId }, '*');
+  setTimeout(() => {
+    if (!aiBridgeReady) {
+      console.log('[AURYN] No AI bridge — showing fallback');
+    }
+  }, 500);
+} else {
+  // Standalone mode — connect to AI bridge WebSocket server
+  standaloneMode = true;
+  fallbackEl.style.display = 'none';
+  messagesEl.style.display = '';
+  document.getElementById('input-area').style.display = '';
+  connectionStatus.style.display = 'block';
+  connectionStatus.textContent = 'Connecting to InterBrain...';
+  connectionStatus.className = 'disconnected';
+  console.log('[AURYN] Standalone mode — connecting to AI bridge WebSocket');
+  connectAIBridgeWs();
+}
 
 function sendStreamRequest(messages) {
+  if (standaloneMode) {
+    sendWsBridgeRequest(messages);
+    return;
+  }
   currentRequestId = crypto.randomUUID();
   window.parent.postMessage({
     type: 'ai-inference-stream-request',
@@ -217,6 +290,16 @@ function sendStreamRequest(messages) {
 }
 
 function cancelStream() {
+  if (standaloneMode) {
+    if (currentRequestId && aiBridgeWs && aiBridgeWs.readyState === WebSocket.OPEN) {
+      aiBridgeWs.send(JSON.stringify({
+        type: 'ai-inference-stream-cancel',
+        requestId: currentRequestId
+      }));
+    }
+    finishStream();
+    return;
+  }
   if (currentRequestId) {
     window.parent.postMessage({
       type: 'ai-inference-stream-cancel',
@@ -224,6 +307,98 @@ function cancelStream() {
     }, '*');
   }
   finishStream();
+}
+
+// ============================================================
+// 2b. AI BRIDGE WEBSOCKET (standalone mode)
+// ============================================================
+// Connects to the InterBrain plugin's AI Bridge WebSocket server.
+// Same protocol as the iframe postMessage bridge — the plugin
+// routes to whatever LLM provider is configured in settings.
+
+const AI_BRIDGE_PORT = 27182;
+let aiBridgeWs = null;
+
+function getAIBridgeWsUrl() {
+  // When served by server.py, the InterBrain is on the same machine
+  // Use the page's hostname (works for both localhost and Tailscale IP)
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.hostname || 'localhost';
+  return `${wsProtocol}//${host}:${AI_BRIDGE_PORT}`;
+}
+
+function connectAIBridgeWs() {
+  const url = getAIBridgeWsUrl();
+  console.log('[AURYN] Connecting AI bridge WS:', url);
+
+  try {
+    aiBridgeWs = new WebSocket(url);
+
+    aiBridgeWs.onopen = () => {
+      console.log('[AURYN] AI bridge WS connected');
+      connectionStatus.textContent = 'Connected to InterBrain';
+      connectionStatus.className = 'connected';
+      // Hide after 3s if connected
+      setTimeout(() => {
+        if (aiBridgeWs && aiBridgeWs.readyState === WebSocket.OPEN) {
+          connectionStatus.style.display = 'none';
+        }
+      }, 3000);
+    };
+
+    aiBridgeWs.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+
+      if (data.type === 'ai-bridge-ready') {
+        console.log('[AURYN] AI bridge ready via WebSocket (v' + data.version + ')');
+        return;
+      }
+
+      if (data.requestId !== currentRequestId) return;
+
+      if (data.type === 'ai-inference-stream-chunk') {
+        appendChunk(data.chunk);
+      } else if (data.type === 'ai-inference-stream-done') {
+        finishStream();
+      } else if (data.type === 'ai-inference-stream-error') {
+        finishStream(data.error);
+      }
+    };
+
+    aiBridgeWs.onclose = () => {
+      console.log('[AURYN] AI bridge WS disconnected');
+      aiBridgeWs = null;
+      connectionStatus.style.display = 'block';
+      connectionStatus.textContent = 'Disconnected from InterBrain — reconnecting...';
+      connectionStatus.className = 'disconnected';
+      setTimeout(connectAIBridgeWs, 3000);
+    };
+
+    aiBridgeWs.onerror = () => {
+      console.log('[AURYN] AI bridge WS error');
+    };
+  } catch (e) {
+    console.log('[AURYN] Cannot connect to AI bridge:', e.message);
+    connectionStatus.style.display = 'block';
+    connectionStatus.textContent = 'Cannot reach InterBrain';
+    connectionStatus.className = 'disconnected';
+    setTimeout(connectAIBridgeWs, 5000);
+  }
+}
+
+function sendWsBridgeRequest(messages) {
+  if (!aiBridgeWs || aiBridgeWs.readyState !== WebSocket.OPEN) {
+    finishStream('Not connected to InterBrain. Make sure Obsidian is running.');
+    return;
+  }
+
+  currentRequestId = crypto.randomUUID();
+  aiBridgeWs.send(JSON.stringify({
+    type: 'ai-inference-stream-request',
+    requestId: currentRequestId,
+    messages,
+    complexity: 'standard'
+  }));
 }
 
 // ============================================================
@@ -394,9 +569,9 @@ const ITALIC_SKEW = -12; // degrees
 
 let activeMsg = null;
 
-function createAssistantMessage() {
+function createAnimatedMessage(cssClass) {
   const div = document.createElement('div');
-  div.className = 'msg assistant';
+  div.className = 'msg ' + cssClass;
 
   const textLayer = document.createElement('div');
   textLayer.className = 'text-layer';
@@ -404,7 +579,7 @@ function createAssistantMessage() {
 
   messagesEl.appendChild(div);
 
-  activeMsg = {
+  const msg = {
     el: div,
     textLayer: textLayer,
     fullText: '',
@@ -414,8 +589,10 @@ function createAssistantMessage() {
     xOffset: 0,
     lineData: [],
     animatedChars: 0,
-    wordBuffer: [],       // array of {char, bold, italic, code} tokens
+    wordBuffer: [],
     pendingNewlines: 0,
+    strokeColor: cssClass === 'transcript' ? '#b0b0b0' : '#fff',
+    fillColor: cssClass === 'transcript' ? '#b0b0b0' : '#fff',
   };
 
   if (fontLoaded) {
@@ -428,31 +605,44 @@ function createAssistantMessage() {
     overlay.appendChild(svgEl);
     div.appendChild(overlay);
 
-    activeMsg.svgOverlay = overlay;
-    activeMsg.svgEl = svgEl;
-    startNewLine();
+    msg.svgOverlay = overlay;
+    msg.svgEl = svgEl;
+    startNewLineFor(msg);
   }
 
   scrollToBottom();
-  return div;
+  return msg;
+}
+
+function createAssistantMessage() {
+  activeMsg = createAnimatedMessage('assistant');
+  return activeMsg.el;
+}
+
+function getContainerWidthFor(msg) {
+  if (!msg || !msg.el) return 500;
+  return msg.el.clientWidth || 500;
 }
 
 function getContainerWidth() {
-  if (!activeMsg || !activeMsg.el) return 500;
-  return activeMsg.el.clientWidth || 500;
+  return getContainerWidthFor(activeMsg);
+}
+
+function startNewLineFor(msg, extraGap) {
+  if (!msg) return;
+  let newY;
+  if (msg.lineData.length === 0) {
+    newY = ANIM_FONT_SIZE;
+  } else {
+    const prevY = msg.lineData[msg.lineData.length - 1].y;
+    newY = prevY + ANIM_LINE_HEIGHT + (extraGap || 0);
+  }
+  msg.lineData.push({ y: newY });
+  msg.xOffset = 0;
 }
 
 function startNewLine(extraGap) {
-  if (!activeMsg) return;
-  let newY;
-  if (activeMsg.lineData.length === 0) {
-    newY = ANIM_FONT_SIZE;
-  } else {
-    const prevY = activeMsg.lineData[activeMsg.lineData.length - 1].y;
-    newY = prevY + ANIM_LINE_HEIGHT + (extraGap || 0);
-  }
-  activeMsg.lineData.push({ y: newY });
-  activeMsg.xOffset = 0;
+  startNewLineFor(activeMsg, extraGap);
 }
 
 function measureTokens(tokens) {
@@ -466,35 +656,39 @@ function measureTokens(tokens) {
   return w;
 }
 
-function flushWord() {
-  if (!activeMsg || activeMsg.wordBuffer.length === 0) return;
+function flushWordFor(msg) {
+  if (!msg || msg.wordBuffer.length === 0) return;
 
-  const tokens = activeMsg.wordBuffer;
-  const containerWidth = getContainerWidth();
+  const tokens = msg.wordBuffer;
+  const containerWidth = getContainerWidthFor(msg);
   const wordWidth = measureTokens(tokens);
 
-  if (activeMsg.xOffset > 0 && activeMsg.xOffset + wordWidth > containerWidth) {
-    startNewLine();
+  if (msg.xOffset > 0 && msg.xOffset + wordWidth > containerWidth) {
+    startNewLineFor(msg);
   }
 
   for (const tok of tokens) {
-    renderCharToSVG(tok.char, activeMsg.animatedChars, tok.bold, tok.italic);
-    activeMsg.animatedChars++;
+    renderCharToSVGFor(msg, tok.char, msg.animatedChars, tok.bold, tok.italic);
+    msg.animatedChars++;
   }
 
-  activeMsg.wordBuffer = [];
+  msg.wordBuffer = [];
 }
 
-function renderCharToSVG(char, charIndex, isBold, isItalic) {
-  if (!font || !activeMsg || !activeMsg.svgEl) return;
+function flushWord() {
+  flushWordFor(activeMsg);
+}
 
-  const svgEl = activeMsg.svgEl;
+function renderCharToSVGFor(msg, char, charIndex, isBold, isItalic) {
+  if (!font || !msg || !msg.svgEl) return;
+
+  const svgEl = msg.svgEl;
   const scale = ANIM_FONT_SIZE / font.unitsPerEm;
   const glyph = font.charToGlyph(char);
   const advance = (glyph.advanceWidth ?? ANIM_FONT_SIZE * 0.6) * scale;
 
-  const x = activeMsg.xOffset;
-  const y = activeMsg.lineData[activeMsg.lineData.length - 1].y;
+  const x = msg.xOffset;
+  const y = msg.lineData[msg.lineData.length - 1].y;
 
   const path = glyph.getPath(x, y, ANIM_FONT_SIZE);
   const pathStr = path.toSVG(2);
@@ -505,8 +699,6 @@ function renderCharToSVG(char, charIndex, isBold, isItalic) {
 
     // Apply italic skew transform around character center
     if (isItalic) {
-      g.setAttribute('transform', `skewX(${ITALIC_SKEW})`);
-      // Adjust for skew displacement
       const skewRad = ITALIC_SKEW * Math.PI / 180;
       const yCenter = y - ANIM_FONT_SIZE * 0.4;
       const xShift = -yCenter * Math.tan(skewRad);
@@ -527,6 +719,7 @@ function renderCharToSVG(char, charIndex, isBold, isItalic) {
     const strokePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     strokePath.setAttribute('d', dMatch[1]);
     strokePath.setAttribute('class', 'char-path-stroke');
+    strokePath.style.stroke = msg.strokeColor;
     strokePath.style.strokeWidth = strokeWidth;
     strokePath.style.strokeDasharray = pathLength;
     strokePath.style.strokeDashoffset = pathLength;
@@ -539,6 +732,7 @@ function renderCharToSVG(char, charIndex, isBold, isItalic) {
     const fillPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     fillPath.setAttribute('d', dMatch[1]);
     fillPath.setAttribute('class', 'char-path-fill');
+    fillPath.style.fill = msg.fillColor;
     fillPath.style.animation =
       `fill-reveal 0.3s ${delay + STROKE_DURATION * 0.6}s ease-in forwards`;
     g.appendChild(fillPath);
@@ -546,58 +740,116 @@ function renderCharToSVG(char, charIndex, isBold, isItalic) {
     svgEl.appendChild(g);
   }
 
-  activeMsg.xOffset += advance;
+  msg.xOffset += advance;
 
   // Update SVG viewBox
-  const totalHeight = activeMsg.lineData.length * ANIM_LINE_HEIGHT + ANIM_FONT_SIZE * 0.5;
-  const containerWidth = getContainerWidth();
+  const totalHeight = msg.lineData.length * ANIM_LINE_HEIGHT + ANIM_FONT_SIZE * 0.5;
+  const containerWidth = getContainerWidthFor(msg);
   svgEl.setAttribute('viewBox', `0 0 ${containerWidth} ${totalHeight}`);
   svgEl.style.height = totalHeight + 'px';
 }
 
-function processTokens(tokens) {
-  if (!activeMsg) return;
+function renderCharToSVG(char, charIndex, isBold, isItalic) {
+  renderCharToSVGFor(activeMsg, char, charIndex, isBold, isItalic);
+}
+
+function processTokensFor(msg, tokens) {
+  if (!msg) return;
 
   for (const tok of tokens) {
     if (tok.char === '\n') {
-      flushWord();
-      activeMsg.pendingNewlines++;
+      flushWordFor(msg);
+      msg.pendingNewlines++;
     } else {
       // Resolve pending newlines before visible content
-      if (activeMsg.pendingNewlines > 0) {
-        if (activeMsg.pendingNewlines >= 2) {
-          startNewLine(PARAGRAPH_GAP);
+      if (msg.pendingNewlines > 0) {
+        if (msg.pendingNewlines >= 2) {
+          startNewLineFor(msg, PARAGRAPH_GAP);
         } else {
-          startNewLine();
+          startNewLineFor(msg);
         }
-        activeMsg.pendingNewlines = 0;
+        msg.pendingNewlines = 0;
       }
 
       if (tok.char === ' ') {
-        flushWord();
-        renderCharToSVG(' ', activeMsg.animatedChars, false, false);
-        activeMsg.animatedChars++;
+        flushWordFor(msg);
+        renderCharToSVGFor(msg, ' ', msg.animatedChars, false, false);
+        msg.animatedChars++;
       } else {
-        activeMsg.wordBuffer.push(tok);
+        msg.wordBuffer.push(tok);
       }
     }
   }
 }
 
-function appendChunk(chunk) {
-  if (!activeMsg) return;
-  activeMsg.fullText += chunk;
+function processTokens(tokens) {
+  processTokensFor(activeMsg, tokens);
+}
 
-  // Update hidden text layer with proper markdown HTML
-  activeMsg.textLayer.innerHTML = renderMarkdown(activeMsg.fullText);
+function appendChunkTo(msg, chunk) {
+  if (!msg) return;
+  msg.fullText += chunk;
 
-  if (fontLoaded && activeMsg.svgEl) {
-    // Parse chunk through markdown state machine — returns styled tokens
-    const tokens = activeMsg.mdParser.feed(chunk);
-    processTokens(tokens);
+  // Update hidden text layer
+  msg.textLayer.innerHTML = renderMarkdown(msg.fullText);
+
+  if (fontLoaded && msg.svgEl) {
+    const tokens = msg.mdParser.feed(chunk);
+    processTokensFor(msg, tokens);
   }
 
   scrollToBottom();
+}
+
+function appendChunk(chunk) {
+  appendChunkTo(activeMsg, chunk);
+}
+
+function finishAnimatedMessage(msg, error) {
+  if (!msg) return;
+
+  // Flush remaining
+  if (msg.mdParser) {
+    const remaining = msg.mdParser.flush();
+    processTokensFor(msg, remaining);
+  }
+  if (msg.wordBuffer && msg.wordBuffer.length > 0) {
+    flushWordFor(msg);
+  }
+
+  if (error) {
+    const errEl = document.createElement('div');
+    errEl.style.color = '#8B0000';
+    errEl.style.fontSize = '13px';
+    errEl.style.marginTop = '8px';
+    errEl.textContent = 'Error: ' + error;
+    msg.el.appendChild(errEl);
+  }
+
+  // Seamless swap: wait for last animation to finish, then fade SVG and reveal text
+  if (msg.svgOverlay && msg.svgEl) {
+    const lastCharDelay = msg.animatedChars * CASCADE_DELAY;
+    const totalAnimTime = (lastCharDelay + STROKE_DURATION + FILL_DELAY + 0.5) * 1000;
+
+    setTimeout(() => {
+      if (!msg.el) return;
+      msg.svgOverlay.style.transition = 'opacity 0.4s ease-out';
+      msg.svgOverlay.style.opacity = '0';
+      msg.textLayer.style.visibility = 'visible';
+      msg.textLayer.style.opacity = '0';
+      msg.textLayer.style.transition = 'opacity 0.4s ease-in';
+      msg.textLayer.offsetHeight;
+      msg.textLayer.style.opacity = '1';
+
+      setTimeout(() => {
+        if (msg.svgOverlay && msg.svgOverlay.parentNode) {
+          msg.svgOverlay.remove();
+        }
+      }, 500);
+    }, totalAnimTime);
+  } else {
+    msg.textLayer.style.visibility = 'visible';
+  }
 }
 
 function finishStream(error) {
@@ -608,57 +860,11 @@ function finishStream(error) {
   sendBtn.disabled = false;
 
   if (activeMsg) {
-    // Flush remaining markdown parser buffer and word buffer
-    if (activeMsg.mdParser) {
-      const remaining = activeMsg.mdParser.flush();
-      processTokens(remaining);
-    }
-    if (activeMsg.wordBuffer && activeMsg.wordBuffer.length > 0) {
-      flushWord();
-    }
-
-    if (error) {
-      const errEl = document.createElement('div');
-      errEl.style.color = '#8B0000';
-      errEl.style.fontSize = '13px';
-      errEl.style.marginTop = '8px';
-      errEl.textContent = 'Error: ' + error;
-      activeMsg.el.appendChild(errEl);
-    }
+    finishAnimatedMessage(activeMsg, error);
 
     // Save to conversation
     if (activeMsg.fullText) {
       conversation.push({ role: 'assistant', content: activeMsg.fullText });
-    }
-
-    // Seamless swap: wait for last animation to finish, then fade SVG and reveal text
-    const msg = activeMsg;
-    if (msg.svgOverlay && msg.svgEl) {
-      const lastCharDelay = msg.animatedChars * CASCADE_DELAY;
-      const totalAnimTime = (lastCharDelay + STROKE_DURATION + FILL_DELAY + 0.5) * 1000;
-
-      setTimeout(() => {
-        if (!msg.el) return;
-        // Crossfade: fade out SVG overlay while revealing text layer
-        msg.svgOverlay.style.transition = 'opacity 0.4s ease-out';
-        msg.svgOverlay.style.opacity = '0';
-        msg.textLayer.style.visibility = 'visible';
-        msg.textLayer.style.opacity = '0';
-        msg.textLayer.style.transition = 'opacity 0.4s ease-in';
-        // Force reflow before starting transition
-        msg.textLayer.offsetHeight;
-        msg.textLayer.style.opacity = '1';
-
-        // Remove SVG overlay after fade completes
-        setTimeout(() => {
-          if (msg.svgOverlay && msg.svgOverlay.parentNode) {
-            msg.svgOverlay.remove();
-          }
-        }, 500);
-      }, totalAnimTime);
-    } else {
-      // No SVG — text layer already visible
-      msg.textLayer.style.visibility = 'visible';
     }
 
     activeMsg = null;
@@ -674,10 +880,10 @@ function scrollToBottom() {
 }
 
 // ============================================================
-// 6. CHAT LOGIC
+// 7. CHAT LOGIC
 // ============================================================
-function sendMessage() {
-  const text = inputEl.value.trim();
+function sendMessage(text) {
+  if (!text) text = inputEl.value.trim();
   if (!text || isStreaming) return;
 
   const userMsg = document.createElement('div');
@@ -705,10 +911,269 @@ function sendMessage() {
 }
 
 // ============================================================
-// 7. EVENT HANDLERS
+// 8. TRANSCRIPTION (VOICE)
 // ============================================================
-sendBtn.addEventListener('click', sendMessage);
+function getTranscriptionWsUrl() {
+  // When standalone, connect to the same host serving this page
+  if (standaloneMode) {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${wsProtocol}//${window.location.host}/ws/transcribe`;
+  }
+  // Inside InterBrain iframe (Obsidian Electron): server.py runs on same machine
+  // Use plain ws: to localhost:3002 — avoids self-signed cert issues in Electron
+  return `ws://localhost:3002/ws/transcribe`;
+}
+
+function connectTranscriptionWs() {
+  const url = getTranscriptionWsUrl();
+  console.log('[AURYN] Connecting transcription WS:', url);
+
+  try {
+    transcriptionWs = new WebSocket(url);
+
+    transcriptionWs.onopen = () => {
+      console.log('[AURYN] Transcription WS connected');
+      micBtn.disabled = false;
+      micBtn.title = 'Record voice';
+    };
+
+    transcriptionWs.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+
+      if (data.type === 'transcript_chunk' && transcriptMsg) {
+        // Append a space before the chunk if we already have text
+        const prefix = transcriptMsg.fullText ? ' ' : '';
+        appendChunkTo(transcriptMsg, prefix + data.text);
+      } else if (data.type === 'stream_ended') {
+        finishRecording(data.full_text);
+      } else if (data.type === 'session_started') {
+        console.log('[AURYN] Transcription session:', data.session_id);
+      }
+    };
+
+    transcriptionWs.onclose = () => {
+      console.log('[AURYN] Transcription WS disconnected');
+      micBtn.disabled = true;
+      micBtn.title = 'Transcription server unavailable';
+      transcriptionWs = null;
+      // Reconnect after delay
+      setTimeout(connectTranscriptionWs, 5000);
+    };
+
+    transcriptionWs.onerror = () => {
+      console.log('[AURYN] Transcription WS error');
+    };
+  } catch (e) {
+    console.log('[AURYN] Cannot connect to transcription server:', e.message);
+    micBtn.disabled = true;
+    micBtn.title = 'Transcription server unavailable';
+  }
+}
+
+async function startRecording() {
+  if (!transcriptionWs || transcriptionWs.readyState !== WebSocket.OPEN) {
+    console.log('[AURYN] No transcription server');
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
+    });
+
+    // Signal start
+    transcriptionWs.send(JSON.stringify({ type: 'start_stream' }));
+
+    mediaRecorder = new MediaRecorder(stream, {
+      mimeType: 'audio/webm;codecs=opus'
+    });
+
+    mediaRecorder.ondataavailable = async (e) => {
+      if (e.data.size > 0 && transcriptionWs && transcriptionWs.readyState === WebSocket.OPEN) {
+        const buffer = await e.data.arrayBuffer();
+        transcriptionWs.send(buffer);
+      }
+    };
+
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(track => track.stop());
+      if (transcriptionWs && transcriptionWs.readyState === WebSocket.OPEN) {
+        transcriptionWs.send(JSON.stringify({ type: 'end_stream' }));
+      }
+    };
+
+    // Create transcript message with label
+    const label = document.createElement('div');
+    label.className = 'transcript-label';
+    label.textContent = 'transcribing...';
+    messagesEl.appendChild(label);
+
+    transcriptMsg = createAnimatedMessage('transcript');
+
+    // Start recording with 500ms chunks
+    mediaRecorder.start(500);
+    isRecording = true;
+    micBtn.classList.add('recording');
+    micBtn.title = 'Stop recording';
+
+    scrollToBottom();
+  } catch (err) {
+    console.error('[AURYN] Mic error:', err);
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  isRecording = false;
+  micBtn.classList.remove('recording');
+  micBtn.title = 'Record voice';
+}
+
+function finishRecording(fullText) {
+  if (transcriptMsg) {
+    // Update label
+    const label = transcriptMsg.el.previousElementSibling;
+    if (label && label.classList.contains('transcript-label')) {
+      label.textContent = 'transcribed';
+    }
+
+    finishAnimatedMessage(transcriptMsg);
+
+    // Auto-send as user message if we have text
+    const text = fullText || transcriptMsg.fullText;
+    transcriptMsg = null;
+
+    if (text && text.trim()) {
+      // Brief delay so user sees the transcription before it sends
+      setTimeout(() => {
+        sendMessage(text.trim());
+      }, 800);
+    }
+  }
+}
+
+// ============================================================
+// 9. DRAG AND DROP AUDIO
+// ============================================================
+let dragCounter = 0;
+
+document.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  dragCounter++;
+  if (hasAudioFile(e)) {
+    dropOverlay.classList.add('active');
+  }
+});
+
+document.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  dragCounter--;
+  if (dragCounter <= 0) {
+    dragCounter = 0;
+    dropOverlay.classList.remove('active');
+  }
+});
+
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+});
+
+document.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dragCounter = 0;
+  dropOverlay.classList.remove('active');
+
+  const files = [...e.dataTransfer.files].filter(f =>
+    f.type.startsWith('audio/') ||
+    /\.(webm|mp3|wav|m4a|ogg|mp4|aac|flac)$/i.test(f.name)
+  );
+
+  if (files.length === 0) return;
+
+  for (const file of files) {
+    await transcribeFile(file);
+  }
+});
+
+function hasAudioFile(e) {
+  if (e.dataTransfer.items) {
+    for (const item of e.dataTransfer.items) {
+      if (item.kind === 'file' && (item.type.startsWith('audio/') || item.type.startsWith('video/'))) {
+        return true;
+      }
+    }
+  }
+  return true; // Permissive — show overlay, filter on drop
+}
+
+async function transcribeFile(file) {
+  // Show label
+  const label = document.createElement('div');
+  label.className = 'transcript-label';
+  label.textContent = `transcribing ${file.name}...`;
+  messagesEl.appendChild(label);
+
+  const msg = createAnimatedMessage('transcript');
+  appendChunkTo(msg, 'Processing audio...');
+  scrollToBottom();
+
+  // Upload to server
+  const uploadUrl = standaloneMode
+    ? '/upload/audio'
+    : 'http://localhost:3002/upload/audio';
+
+  try {
+    const form = new FormData();
+    form.append('file', file, file.name);
+
+    const resp = await fetch(uploadUrl, { method: 'POST', body: form });
+    const data = await resp.json();
+
+    // Clear the processing text and show real transcription
+    msg.fullText = '';
+    msg.textLayer.innerHTML = '';
+    if (msg.svgEl) {
+      while (msg.svgEl.firstChild) msg.svgEl.removeChild(msg.svgEl.firstChild);
+      msg.animatedChars = 0;
+      msg.lineData = [];
+      msg.xOffset = 0;
+      msg.mdParser = createMarkdownParser();
+      startNewLineFor(msg);
+    }
+
+    if (data.text) {
+      appendChunkTo(msg, data.text);
+      label.textContent = `transcribed: ${file.name}`;
+      finishAnimatedMessage(msg);
+
+      // Auto-send as user message
+      setTimeout(() => { sendMessage(data.text.trim()); }, 800);
+    } else if (data.error) {
+      label.textContent = `failed: ${file.name}`;
+      appendChunkTo(msg, data.error);
+      finishAnimatedMessage(msg, data.error);
+    }
+  } catch (err) {
+    label.textContent = `error: ${file.name}`;
+    finishAnimatedMessage(msg, err.message);
+  }
+}
+
+// ============================================================
+// 10. EVENT HANDLERS
+// ============================================================
+sendBtn.addEventListener('click', () => sendMessage());
 stopBtn.addEventListener('click', () => { cancelStream(); });
+
+micBtn.addEventListener('click', () => {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+});
 
 inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -721,6 +1186,12 @@ inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
 });
+
+// ============================================================
+// 11. INIT
+// ============================================================
+// Connect to transcription server
+connectTranscriptionWs();
 </script>
 </body>
 </html>
