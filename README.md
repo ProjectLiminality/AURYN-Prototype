@@ -51,7 +51,7 @@ AURYN's value is the cultivation layer itself, completely decoupled from any spe
 
 The token service is a convenience store attached to the garden. You don't need to grow the food to run the store, and you don't need the store to grow food. They're naturally decoupled. This means AURYN can position itself universally — it benefits from any tool's improvement because it sits at the layer above.
 
-## Current State (as of 2026-02-12)
+## Current State (as of 2026-03-01)
 
 AURYN is a fully functional MCP server with **35 tools** across 13 domains. All tools are implemented with proper error handling and graceful degradation (Ollama and Radicle failures are non-fatal). The codebase is clean TypeScript with zero TODOs or stubs.
 
@@ -67,14 +67,20 @@ AURYN is a fully functional MCP server with **35 tools** across 13 domains. All 
 - Merge DreamNodes (unify two nodes into one sovereign entity preserving both git histories and all cross-references)
 - Social resonance filter (Radicle publish/clone, peer sync, cherry-pick collaboration with full state machine, collaboration memory)
 - Coherence beacon (ignite/detect beacon commits after dreamweaving)
+- AURYN chatbot custom UI (`index.html`) with 3B1B write animation for streaming responses
+- Real-time voice transcription on desktop — mic button streams audio to InterBrain Mobile's Whisper server, transcript appears with write animation. Requires `InterBrain Mobile/server.py` running (dual-port: HTTPS 3001 for phone, HTTP 3002 for localhost Obsidian iframe)
+- AI Bridge WebSocket server (port 27182) inside InterBrain plugin — exposes LLM inference to external UIs without API keys, same protocol as iframe postMessage bridge. Standalone AURYN chatbot connects via this WebSocket
+- Drag-and-drop audio file transcription — drop audio files onto chatbot for Whisper processing with write animation
+
+**What's in progress (partially working, needs completion):**
+- Mobile access to AURYN chatbot — server.py serves AURYN at `/auryn` route over Tailscale, but page not loading properly yet on phone. The architecture is in place (dual-port server, AI bridge WebSocket, transcription WS), just needs debugging
+- Standalone mode for AURYN chatbot — detection works (`isInIframe`), AI bridge WS connection logic exists, needs end-to-end testing on mobile
 
 **What's crystallizing conceptually but not yet implemented:**
 - AURYN-native session spawning — The InterBrain's "open in Claude Code" button (currently a terminal icon on the selected DreamNode) should use AURYN's DreamTalk symbol instead, and by default spawn Claude Code in AURYN's directory (not the DreamNode's), with the selected DreamNode's README and DreamSong auto-loaded into context. This is the current best prototype of AURYN as its own thing — the agent always starts from AURYN's root with the relevant DreamNode context injected. Eventually "claude" gets replaced by "auryn" and sessions start at the vault root, but spawning into AURYN is the stepping stone.
-- Voice transcription pipeline (own the full lifecycle from spoken word to actionable text). Key sub-features:
+- Voice transcription pipeline (own the full lifecycle from spoken word to actionable text). Real-time transcription and drag-and-drop are working on desktop (see above). Remaining sub-features:
   - **LLM refinement of transcribed text**: Run a lightweight, specialized LLM inference pass over raw Whisper output to correct contextual errors (similar to what ChatGPT does — goes beyond the model itself by using context to figure out what words probably meant). Start with public APIs for prototyping, move to local LLM for production.
   - **Auto-populated custom vocabulary**: Automatically inject all DreamNode titles into Whisper's `initial_prompt` / vocabulary biasing so that neologisms and project-specific terms (AURYN, DreamNode, InterBrain, etc.) are recognized correctly. The vocabulary grows as the garden grows.
-  - **Real-time transcription in AURYN chatbot UI**: While talking, text appears with the 3B1B write animation — same visual treatment as LLM streaming responses. No 10-minute cap, fully local, free.
-  - **Drag-and-drop audio file transcription**: Drop a voice memo (e.g., from WhatsApp) into the AURYN chatbot, it gets transcribed using the same pipeline as live recording. File is preserved with its path; AURYN holds both the transcription and the source file reference.
 - Canvas-submodule sync (bidirectional: canvas references ↔ git submodules)
 - Holarchic resonance management (downstream/upstream cherry-pick flows between sovereign repos and submodule clones)
 - Situational assessment as a native operation (pull latest submodule state → read DreamSong + READMEs + recent commits → produce status → update README)
