@@ -3,7 +3,7 @@
  * Uses InterBrain's services via standalone-adapter
  */
 
-import { DreamNodeService, DEFAULT_VAULT_PATH } from '../services/standalone-adapter.js';
+import { DreamNodeService, UDDService, discoverAllDreamNodes, DEFAULT_VAULT_PATH } from '../services/standalone-adapter.js';
 
 // list_dreamnodes REMOVED
 // Reason: Dumps all nodes, pollutes context. Use semantic search via context-provider agent instead.
@@ -186,6 +186,7 @@ export async function deleteDreamnode(args: {
 }): Promise<{
   success: boolean;
   deleted_path?: string;
+  cleaned_references?: string[];
   error?: string;
 }> {
   if (!args.confirm) {
@@ -204,11 +205,55 @@ export async function deleteDreamnode(args: {
       };
     }
 
+    const deletedUuid = node.uuid;
     await DreamNodeService.deleteDreamNode(node.path);
+
+    // Clean up references to deleted node in all other DreamNodes' .udd files
+    const cleanedReferences: string[] = [];
+    try {
+      const allNodes = await discoverAllDreamNodes();
+
+      for (const otherNode of allNodes) {
+        let modified = false;
+        let udd;
+        try {
+          udd = await UDDService.readUDD(otherNode.path);
+        } catch {
+          continue; // Skip nodes with unreadable .udd
+        }
+
+        // Remove from submodules array
+        const subIdx = udd.submodules.indexOf(deletedUuid);
+        if (subIdx !== -1) {
+          udd.submodules.splice(subIdx, 1);
+          modified = true;
+        }
+
+        // Remove from supermodules array (handles both string UUIDs and SupermoduleEntry objects)
+        const origLen = udd.supermodules.length;
+        udd.supermodules = udd.supermodules.filter(s => {
+          if (typeof s === 'string') return s !== deletedUuid;
+          if ('uuid' in s && (s as Record<string, unknown>).uuid === deletedUuid) return false;
+          if ('radicleId' in s && node.radicleId && s.radicleId === node.radicleId) return false;
+          return true;
+        });
+        if (udd.supermodules.length !== origLen) {
+          modified = true;
+        }
+
+        if (modified) {
+          await UDDService.writeUDD(otherNode.path, udd);
+          cleanedReferences.push(otherNode.title);
+        }
+      }
+    } catch {
+      // Reference cleanup is best-effort; deletion itself succeeded
+    }
 
     return {
       success: true,
-      deleted_path: node.path
+      deleted_path: node.path,
+      cleaned_references: cleanedReferences.length > 0 ? cleanedReferences : undefined
     };
   } catch (error) {
     return {
