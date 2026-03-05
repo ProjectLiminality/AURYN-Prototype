@@ -1616,42 +1616,136 @@ Each "old" string must be an EXACT substring of the current README content. Keep
 
 
 async def _ai_bridge_inference(messages: list[dict], port: int = 27182) -> str:
-    """Send an inference request to the AI bridge WebSocket and collect the full response."""
-    import aiohttp as aio
+    """Send an inference request to the AI bridge WebSocket and collect the full response.
 
-    url = f"ws://localhost:{port}"
+    Uses raw sockets because the InterBrain's WebSocket server computes
+    Sec-WebSocket-Accept incorrectly — browsers don't care, but Python
+    WebSocket libraries reject the handshake. Raw TCP bypasses this.
+    """
+    import base64 as b64
+
     request_id = str(uuid.uuid4())
-    chunks = []
+    chunks: list[str] = []
 
-    async with aio.ClientSession() as session:
-        async with session.ws_connect(url) as ws:
-            # Wait for ready
-            async for msg in ws:
-                if msg.type == aio.WSMsgType.TEXT:
-                    data = json.loads(msg.data)
-                    if data.get("type") == "ai-bridge-ready":
-                        break
+    reader, writer = await asyncio.open_connection("localhost", port)
 
-            # Send request
-            await ws.send_json({
-                "type": "ai-inference-stream-request",
-                "requestId": request_id,
-                "messages": messages,
-                "complexity": "standard",
-            })
+    # WebSocket handshake
+    ws_key = b64.b64encode(os.urandom(16)).decode()
+    handshake = (
+        "GET / HTTP/1.1\r\n"
+        "Host: localhost:{}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: {}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n"
+    ).format(port, ws_key)
+    writer.write(handshake.encode())
+    await writer.drain()
 
-            # Collect response
-            async for msg in ws:
-                if msg.type == aio.WSMsgType.TEXT:
-                    data = json.loads(msg.data)
-                    if data.get("requestId") != request_id:
-                        continue
-                    if data["type"] == "ai-inference-stream-chunk":
-                        chunks.append(data["chunk"])
-                    elif data["type"] == "ai-inference-stream-done":
-                        break
-                    elif data["type"] == "ai-inference-stream-error":
-                        raise RuntimeError(f"AI bridge error: {data.get('error')}")
+    # Read handshake response (skip validation of Sec-WebSocket-Accept)
+    resp = b""
+    while b"\r\n\r\n" not in resp:
+        resp += await reader.read(4096)
+    if b"101" not in resp:
+        writer.close()
+        raise RuntimeError(f"AI bridge handshake failed: {resp[:200].decode()}")
+
+    # Any data after the headers is the start of the first frame
+    after_headers = resp.split(b"\r\n\r\n", 1)[1]
+    buffer = bytearray(after_headers)
+
+    async def _read_frame() -> str:
+        """Read one WebSocket text frame."""
+        nonlocal buffer
+        # Ensure we have at least 2 bytes for the header
+        while len(buffer) < 2:
+            buffer.extend(await reader.read(4096))
+
+        b0, b1 = buffer[0], buffer[1]
+        masked = bool(b1 & 0x80)
+        length = b1 & 0x7F
+        offset = 2
+
+        if length == 126:
+            while len(buffer) < 4:
+                buffer.extend(await reader.read(4096))
+            length = struct.unpack(">H", buffer[2:4])[0]
+            offset = 4
+        elif length == 127:
+            while len(buffer) < 10:
+                buffer.extend(await reader.read(4096))
+            length = struct.unpack(">Q", buffer[2:10])[0]
+            offset = 10
+
+        if masked:
+            offset += 4  # skip mask key (server shouldn't mask, but just in case)
+
+        total = offset + length
+        while len(buffer) < total:
+            buffer.extend(await reader.read(4096))
+
+        payload = buffer[offset:total]
+        if masked:
+            mask = buffer[offset - 4:offset]
+            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+
+        buffer = buffer[total:]
+        return payload.decode("utf-8", errors="replace")
+
+    def _make_frame(text: str) -> bytes:
+        """Create a masked WebSocket text frame (client must mask)."""
+        payload = text.encode("utf-8")
+        frame = bytearray()
+        frame.append(0x81)  # FIN + text opcode
+
+        mask_key = os.urandom(4)
+        length = len(payload)
+        if length < 126:
+            frame.append(0x80 | length)  # masked
+        elif length < 65536:
+            frame.append(0x80 | 126)
+            frame.extend(struct.pack(">H", length))
+        else:
+            frame.append(0x80 | 127)
+            frame.extend(struct.pack(">Q", length))
+
+        frame.extend(mask_key)
+        frame.extend(bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload)))
+        return bytes(frame)
+
+    try:
+        # Wait for ai-bridge-ready
+        ready_msg = await asyncio.wait_for(_read_frame(), timeout=10)
+        data = json.loads(ready_msg)
+        if data.get("type") != "ai-bridge-ready":
+            raise RuntimeError(f"Expected ai-bridge-ready, got: {data}")
+
+        # Send inference request
+        req = json.dumps({
+            "type": "ai-inference-stream-request",
+            "requestId": request_id,
+            "messages": messages,
+            "complexity": "standard",
+        })
+        writer.write(_make_frame(req))
+        await writer.drain()
+
+        # Collect streamed response
+        while True:
+            raw = await asyncio.wait_for(_read_frame(), timeout=120)
+            data = json.loads(raw)
+            if data.get("requestId") != request_id:
+                continue
+            if data["type"] == "ai-inference-stream-chunk":
+                chunks.append(data["chunk"])
+            elif data["type"] == "ai-inference-stream-done":
+                break
+            elif data["type"] == "ai-inference-stream-error":
+                raise RuntimeError(f"AI bridge error: {data.get('error')}")
+
+    finally:
+        writer.close()
 
     return "".join(chunks)
 
