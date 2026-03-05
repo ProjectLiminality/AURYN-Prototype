@@ -1987,12 +1987,20 @@ async def run_claude_code(
 # ============================================================
 
 async def handle_reload(request: web.Request) -> web.Response:
-    """Restart the AURYN server process to pick up code changes."""
+    """Restart the AURYN server process to pick up code changes.
+
+    Spawns a detached shell that waits for this process to die,
+    then starts a fresh server with the same args.
+    """
     import sys
 
     async def _do_restart():
-        await asyncio.sleep(0.5)  # Let the response send first
-        os.execv(sys.executable, [sys.executable, "-m", "uv", "run", __file__] + sys.argv[1:])
+        await asyncio.sleep(0.3)  # Let the HTTP response send
+        pid = os.getpid()
+        cmd_args = " ".join(sys.argv[1:])
+        script = f'while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; cd "{AURYN_DIR}" && uv run aurin.py {cmd_args} &'
+        subprocess.Popen(["bash", "-c", script], start_new_session=True)
+        os._exit(0)
 
     asyncio.create_task(_do_restart())
     return web.Response(text="Restarting...", content_type="text/plain")
