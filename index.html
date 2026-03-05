@@ -188,7 +188,7 @@
     flex: 1; background: #111; border: 1px solid #333;
     border-radius: 8px; color: #e0e0e0; padding: 10px 14px;
     font-family: inherit; font-size: 16px; resize: none;
-    outline: none; min-height: 42px; max-height: 120px;
+    outline: none; min-height: 42px; max-height: 40vh;
     line-height: 1.4;
   }
   #input-area textarea:focus { border-color: #555; }
@@ -286,6 +286,19 @@
   }
   #connection-status.connected { color: #4a7a4a; }
   #connection-status.disconnected { color: #7a4a4a; }
+
+  /* Vocab debug panel */
+  #vocab-debug {
+    display: none; padding: 6px 16px; background: #0a0a0a;
+    border-top: 1px solid #1a1a1a; font-size: 10px; line-height: 1.5;
+    font-family: -apple-system, sans-serif; color: #555;
+    max-height: 80px; overflow-y: auto;
+  }
+  #vocab-debug.active { display: block; }
+  #vocab-debug .vocab-label { color: #666; margin-right: 4px; }
+  #vocab-debug .vocab-core { color: #555; }
+  #vocab-debug .vocab-pinned { color: #FFD700; }
+  #vocab-debug .vocab-ephemeral { color: #4a7a9a; }
 </style>
 </head>
 <body>
@@ -317,6 +330,7 @@
   </div>
 </div>
 
+<div id="vocab-debug"></div>
 <div id="drop-overlay">Drop audio file to transcribe</div>
 <div id="fallback-msg">
   Open in the <span class="accent">InterBrain</span> to chat with AURYN
@@ -408,6 +422,37 @@ function requestDreamNodeCatalog() {
 function setDreamNodeCatalog(nodes) {
   dreamNodeCatalog = nodes;
   console.log('[AURYN] DreamNode catalog loaded:', nodes.length, 'nodes');
+}
+
+function findCatalogNode(folder, title, uuid) {
+  // Match by UUID first, then folder/repoPath, then title
+  if (uuid) {
+    const byUuid = dreamNodeCatalog.find(n => n.id === uuid);
+    if (byUuid) return byUuid;
+  }
+  if (folder) {
+    const byFolder = dreamNodeCatalog.find(n =>
+      n.repoPath === folder || n.repoPath === folder.replace(/ /g, '')
+    );
+    if (byFolder) return byFolder;
+  }
+  if (title) {
+    const byTitle = dreamNodeCatalog.find(n =>
+      n.title.toLowerCase() === title.toLowerCase()
+    );
+    if (byTitle) return byTitle;
+  }
+  // If not in catalog, create a temporary entry so the petal still shows
+  if (folder || title) {
+    return {
+      id: uuid || `detected-${(folder || title).toLowerCase().replace(/\s+/g, '-')}`,
+      title: title || folder,
+      type: 'dream',
+      repoPath: folder || '',
+      dreamTalkUrl: ''
+    };
+  }
+  return null;
 }
 
 // ============================================================
@@ -1279,6 +1324,22 @@ function sendMessage(text) {
 }
 
 // ============================================================
+// 7b. VOCAB DEBUG
+// ============================================================
+function renderVocabDebug(data) {
+  const el = document.getElementById('vocab-debug');
+  const tag = (cls, items) => items.length
+    ? `<span class="vocab-label">${cls}:</span>` +
+      items.map(t => `<span class="vocab-${cls}">${t}</span>`).join(', ') + ' '
+    : '';
+  el.innerHTML =
+    tag('core', data.core || []) +
+    tag('pinned', data.pinned || []) +
+    tag('ephemeral', data.ephemeral || []);
+  el.classList.add('active');
+}
+
+// ============================================================
 // 8. TRANSCRIPTION (VOICE)
 // ============================================================
 function getTranscriptionWsUrl() {
@@ -1305,13 +1366,42 @@ function connectTranscriptionWs() {
     transcriptionWs.onmessage = (e) => {
       const data = JSON.parse(e.data);
 
-      if (data.type === 'transcript_chunk' && transcriptMsg) {
-        const prefix = transcriptMsg.fullText ? ' ' : '';
-        appendChunkTo(transcriptMsg, prefix + data.text);
+      if (data.type === 'transcript_chunk') {
+        // Insert at cursor position in the textarea
+        const start = inputEl.selectionStart;
+        const end = inputEl.selectionEnd;
+        const val = inputEl.value;
+        inputEl.value = val.substring(0, start) + data.text + val.substring(end);
+        inputEl.selectionStart = inputEl.selectionEnd = start + data.text.length;
+        inputEl.style.height = 'auto';
+        inputEl.style.height = inputEl.scrollHeight + 'px';
+        inputEl.focus();
+      } else if (data.type === 'dreamnode_detected') {
+        // A DreamNode name was recognized in the transcript — add to context petals
+        const node = findCatalogNode(data.folder, data.title, data.uuid);
+        if (node) {
+          addToContext(node);
+          console.log('[AURYN] DreamNode detected in voice:', node.title);
+        }
       } else if (data.type === 'stream_ended') {
-        finishRecording(data.full_text);
+        // Leave text in the input field for editing — don't auto-send
+        document.getElementById('vocab-debug').classList.remove('active');
+        inputEl.focus();
+        inputEl.style.height = 'auto';
+        inputEl.style.height = inputEl.scrollHeight + 'px';
+        // Add any pinned DreamNodes that weren't already in context
+        if (data.pinned_dreamnodes && Array.isArray(data.pinned_dreamnodes)) {
+          for (const folder of data.pinned_dreamnodes) {
+            const node = findCatalogNode(folder);
+            if (node) addToContext(node);
+          }
+        }
+      } else if (data.type === 'vocab_update') {
+        renderVocabDebug(data);
       } else if (data.type === 'session_started') {
         console.log('[AURYN] Transcription session:', data.session_id);
+        // Show vocab debug panel during transcription
+        document.getElementById('vocab-debug').classList.add('active');
       }
     };
 
@@ -1364,13 +1454,7 @@ async function startRecording() {
       }
     };
 
-    const label = document.createElement('div');
-    label.className = 'transcript-label';
-    label.textContent = 'transcribing...';
-    messagesEl.appendChild(label);
-
-    transcriptMsg = createAnimatedMessage('transcript');
-
+    inputEl.focus();
     mediaRecorder.start(500);
     isRecording = true;
     micBtn.classList.add('recording');
@@ -1392,23 +1476,10 @@ function stopRecording() {
 }
 
 function finishRecording(fullText) {
-  if (transcriptMsg) {
-    const label = transcriptMsg.el.previousElementSibling;
-    if (label && label.classList.contains('transcript-label')) {
-      label.textContent = 'transcribed';
-    }
-
-    finishAnimatedMessage(transcriptMsg);
-
-    const text = fullText || transcriptMsg.fullText;
-    transcriptMsg = null;
-
-    if (text && text.trim()) {
-      setTimeout(() => {
-        sendMessage(text.trim());
-      }, 800);
-    }
-  }
+  // Text is already in the textarea — just focus for editing
+  inputEl.focus();
+  inputEl.style.height = 'auto';
+  inputEl.style.height = inputEl.scrollHeight + 'px';
 }
 
 // ============================================================
