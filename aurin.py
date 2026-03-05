@@ -1980,6 +1980,124 @@ async def run_claude_code(
         }
 
 
+# ============================================================
+# Server Reload
+# ============================================================
+
+async def handle_reload(request: web.Request) -> web.Response:
+    """Restart the AURYN server process to pick up code changes."""
+    import sys
+
+    async def _do_restart():
+        await asyncio.sleep(0.5)  # Let the response send first
+        os.execv(sys.executable, [sys.executable, "-m", "uv", "run", __file__] + sys.argv[1:])
+
+    asyncio.create_task(_do_restart())
+    return web.Response(text="Restarting...", content_type="text/plain")
+
+
+# ============================================================
+# Claude Code WebSocket — /do command handler
+# ============================================================
+
+async def ws_claude(request: web.Request) -> web.WebSocketResponse:
+    """WebSocket endpoint for Claude Code sub-agent.
+
+    Expects: {
+        type: "claude_code",
+        prompt: "what to do",
+        context: [{title, id, path}, ...],
+        conversation: [{role, content}, ...]
+    }
+
+    Spawns Claude Code in headless mode, streams status back.
+    Supports session continuity via resume.
+    """
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    active_session_id: str | None = None
+
+    async for msg in ws:
+        if msg.type != aiohttp.WSMsgType.TEXT:
+            continue
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            continue
+
+        if data.get("type") != "claude_code":
+            continue
+
+        prompt = data.get("prompt", "")
+        context_nodes = data.get("context", [])
+        conversation = data.get("conversation", [])
+
+        if not prompt:
+            await ws.send_json({"type": "claude_status", "message": "No prompt provided."})
+            continue
+
+        # Build context for Claude Code
+        context_parts = []
+        for node in context_nodes:
+            path = node.get("path", "")
+            title = node.get("title", "")
+            readme_path = Path(path) / "README.md" if path and Path(path).is_dir() else None
+            if readme_path and readme_path.exists():
+                content = readme_path.read_text(encoding="utf-8")
+                context_parts.append(f"## DreamNode: {title}\nPath: {path}\n\n{content}")
+
+        # Include recent conversation for context
+        conv_text = ""
+        if conversation:
+            recent = conversation[-10:]  # last 10 messages
+            conv_text = "\n".join(f"[{m['role']}]: {m['content']}" for m in recent)
+
+        full_prompt = prompt
+        if context_parts:
+            full_prompt = (
+                "Context — these DreamNodes are relevant:\n\n"
+                + "\n\n---\n\n".join(context_parts)
+                + "\n\n---\n\nRecent conversation:\n" + conv_text
+                + "\n\n---\n\nTask: " + prompt
+            )
+
+        await ws.send_json({"type": "claude_status", "message": f"Spawning Claude Code..."})
+
+        try:
+            result = await run_claude_code(
+                prompt=full_prompt,
+                session_id=active_session_id,
+                resume=bool(active_session_id),
+                model="sonnet",
+                max_budget=1.00,
+                cwd=str(AURYN_DIR),
+                allowed_tools="Bash Read Edit Write Grep Glob",
+            )
+
+            active_session_id = result.get("session_id", active_session_id)
+            response_text = result.get("result", "")
+            cost = result.get("total_cost_usd", 0)
+            is_error = result.get("is_error", False)
+
+            await ws.send_json({
+                "type": "claude_result",
+                "status": "error" if is_error else "done",
+                "message": response_text,
+                "session_id": active_session_id,
+                "cost": cost,
+            })
+
+        except Exception as e:
+            await ws.send_json({
+                "type": "claude_result",
+                "status": "error",
+                "message": str(e),
+            })
+
+    return ws
+
+
 def create_app(
     host: str, port: int, model: str, ollama_url: str,
     claude_api_key: str = "", models: list[str] | None = None,
@@ -1997,7 +2115,9 @@ def create_app(
     app.router.add_get("/ws", ws_inference)
     app.router.add_get("/ws/transcribe", ws_transcribe)
     app.router.add_get("/ws/garden", ws_garden)
+    app.router.add_get("/ws/claude", ws_claude)
     app.router.add_post("/upload/audio", handle_audio_upload)
+    app.router.add_post("/reload", handle_reload)
     app.router.add_get("/install-cert", handle_install_cert)
     app.router.add_get("/", handle_index)
     app.router.add_get("/{path:.*}", handle_static)

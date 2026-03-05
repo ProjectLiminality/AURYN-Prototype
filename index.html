@@ -287,6 +287,12 @@
   }
   #connection-status.connected { color: #4a7a4a; }
   #connection-status.disconnected { color: #7a4a4a; }
+  #reload-btn {
+    position: fixed; top: 4px; right: 8px; z-index: 100;
+    background: none; border: 1px solid #333; border-radius: 4px;
+    color: #555; font-size: 10px; padding: 2px 8px; cursor: pointer;
+  }
+  #reload-btn:hover { color: #aaa; border-color: #555; }
 
   /* Vocab debug panel */
   #vocab-debug {
@@ -304,6 +310,7 @@
 </head>
 <body>
 <div id="connection-status"></div>
+<button id="reload-btn" onclick="reloadServer()" title="Restart AURYN server">reload</button>
 
 <!-- CONTEXT ZONE: AURYN symbol + context petals -->
 <div id="context-zone">
@@ -1302,6 +1309,24 @@ function sendMessage(text) {
   // Hide autocomplete on send
   hideAutocomplete();
 
+  // Check for /do command — route to Claude Code
+  if (text.startsWith('/do ')) {
+    const doPrompt = text.slice(4).trim();
+    if (doPrompt) {
+      // Show user message
+      const userMsg = document.createElement('div');
+      userMsg.className = 'msg user';
+      userMsg.textContent = text;
+      messagesEl.appendChild(userMsg);
+      conversation.push({ role: 'user', content: text });
+      inputEl.value = '';
+      inputEl.style.height = 'auto';
+      updateSendButton();
+      startClaudeCode(doPrompt);
+      return;
+    }
+  }
+
   const userMsg = document.createElement('div');
   userMsg.className = 'msg user';
   userMsg.textContent = text;
@@ -1311,6 +1336,7 @@ function sendMessage(text) {
 
   inputEl.value = '';
   inputEl.style.height = 'auto';
+  updateSendButton();
 
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
@@ -1695,6 +1721,115 @@ function finishGardening() {
   isGardening = false;
   if (gardenWs) { gardenWs.close(); gardenWs = null; }
   updateSendButton();
+}
+
+// ============================================================
+// 9c. CLAUDE CODE SUB-AGENT (/do command)
+// ============================================================
+
+let claudeWs = null;
+let isClaudeWorking = false;
+
+function getClaudeWsUrl() {
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${window.location.host}/ws/claude`;
+}
+
+function startClaudeCode(prompt) {
+  if (isClaudeWorking) return;
+  isClaudeWorking = true;
+
+  // Show status in chat
+  const statusMsg = document.createElement('div');
+  statusMsg.className = 'msg assistant';
+  statusMsg.id = 'claude-status';
+  statusMsg.textContent = 'Spawning Claude Code...';
+  messagesEl.appendChild(statusMsg);
+  scrollToBottom();
+
+  try {
+    const ws = new WebSocket(getClaudeWsUrl());
+    claudeWs = ws;
+
+    ws.onopen = () => {
+      const context = contextNodes.map(n => ({
+        title: n.title,
+        id: n.id,
+        path: n.absPath || '',
+      }));
+
+      ws.send(JSON.stringify({
+        type: 'claude_code',
+        prompt: prompt,
+        context: context,
+        conversation: conversation,
+      }));
+    };
+
+    ws.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      const el = document.getElementById('claude-status');
+
+      if (data.type === 'claude_status') {
+        if (el) el.textContent = data.message;
+      } else if (data.type === 'claude_result') {
+        if (el) {
+          let text = data.message || 'Done.';
+          if (data.cost) text += `\n\nCost: $${data.cost.toFixed(4)}`;
+          if (data.status === 'done') {
+            // Check if changes might need a reload
+            text += '\n\n(Refresh page for UI changes. Use reload button for server changes.)';
+          }
+          el.textContent = text;
+          el.removeAttribute('id');
+        }
+        // Add to conversation so AURYN knows what happened
+        conversation.push({ role: 'assistant', content: '[Claude Code] ' + (data.message || 'Done.') });
+        finishClaudeCode();
+      }
+    };
+
+    ws.onerror = () => {
+      const el = document.getElementById('claude-status');
+      if (el) el.textContent = 'Claude Code error — could not connect.';
+      finishClaudeCode();
+    };
+
+    ws.onclose = () => { claudeWs = null; };
+
+  } catch (e) {
+    const el = document.getElementById('claude-status');
+    if (el) el.textContent = 'Claude Code error: ' + e.message;
+    finishClaudeCode();
+  }
+}
+
+function finishClaudeCode() {
+  isClaudeWorking = false;
+  if (claudeWs) { claudeWs.close(); claudeWs = null; }
+  updateSendButton();
+}
+
+// Server reload
+function reloadServer() {
+  const protocol = window.location.protocol;
+  const host = window.location.host;
+  fetch(`${protocol}//${host}/reload`, { method: 'POST' })
+    .then(() => {
+      const msg = document.createElement('div');
+      msg.className = 'msg assistant';
+      msg.textContent = 'Server restarting... reconnecting in 5s.';
+      messagesEl.appendChild(msg);
+      scrollToBottom();
+      // Reconnect after restart
+      setTimeout(() => { window.location.reload(); }, 5000);
+    })
+    .catch(e => {
+      const msg = document.createElement('div');
+      msg.className = 'msg assistant';
+      msg.textContent = 'Reload failed: ' + e.message;
+      messagesEl.appendChild(msg);
+    });
 }
 
 // ============================================================
