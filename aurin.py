@@ -1947,21 +1947,23 @@ async def run_claude_code(
         cmd.extend(["--session-id", session_id])
 
     if allowed_tools:
-        cmd.extend(["--allowedTools", allowed_tools])
+        for tool in allowed_tools.split():
+            cmd.extend(["--allowedTools", tool])
 
-    cmd.append(prompt)
+    # Pass prompt via stdin to avoid shell argument length limits
 
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)  # Allow nested sessions
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd or str(AURYN_DIR),
         env=env,
     )
-    stdout, stderr = await proc.communicate()
+    stdout, stderr = await proc.communicate(input=prompt.encode("utf-8"))
 
     output = stdout.decode("utf-8", errors="replace")
     try:
