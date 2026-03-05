@@ -1132,6 +1132,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 "folder": info["folder"],
                 "title": info["title"],
                 "uuid": info["uuid"],
+                "path": info.get("path", ""),
             })
         except Exception:
             pass
@@ -1580,6 +1581,311 @@ def get_ollama_models(ollama_url: str) -> list[str]:
         return []
 
 
+# ============================================================
+# Knowledge Gardening — route insights to DreamNode READMEs
+# ============================================================
+
+GARDEN_SYSTEM_PROMPT = """You are AURYN's knowledge gardener. Your job: read a conversation and its loaded DreamNode context, then surgically update the relevant READMEs with new insights.
+
+RULES:
+- Only add genuinely new insights not already present in the README
+- Be surgical — edit specific sections, don't rewrite entire files
+- Preserve the existing voice and style of each README
+- If a README has no relevant section for the insight, add a minimal new section
+- Signal over noise: concrete insights, structural decisions, distilled wisdom. NOT stream of consciousness or redundant reformulations
+- Output ONLY valid JSON — no markdown fences, no commentary before or after
+
+OUTPUT FORMAT — a JSON array of edits:
+[
+  {
+    "dreamnode": "Title of DreamNode",
+    "path": "/absolute/path/to/README.md",
+    "reason": "Brief explanation of what insight is being added",
+    "edits": [
+      {
+        "old": "exact existing text to find and replace",
+        "new": "the replacement text with the new insight woven in"
+      }
+    ]
+  }
+]
+
+If no edits are needed, return an empty array: []
+
+Each "old" string must be an EXACT substring of the current README content. Keep edits minimal — include just enough surrounding context in "old" to uniquely identify the location."""
+
+
+async def _ai_bridge_inference(messages: list[dict], port: int = 27182) -> str:
+    """Send an inference request to the AI bridge WebSocket and collect the full response."""
+    import aiohttp as aio
+
+    url = f"ws://localhost:{port}"
+    request_id = str(uuid.uuid4())
+    chunks = []
+
+    async with aio.ClientSession() as session:
+        async with session.ws_connect(url) as ws:
+            # Wait for ready
+            async for msg in ws:
+                if msg.type == aio.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    if data.get("type") == "ai-bridge-ready":
+                        break
+
+            # Send request
+            await ws.send_json({
+                "type": "ai-inference-stream-request",
+                "requestId": request_id,
+                "messages": messages,
+                "complexity": "standard",
+            })
+
+            # Collect response
+            async for msg in ws:
+                if msg.type == aio.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    if data.get("requestId") != request_id:
+                        continue
+                    if data["type"] == "ai-inference-stream-chunk":
+                        chunks.append(data["chunk"])
+                    elif data["type"] == "ai-inference-stream-done":
+                        break
+                    elif data["type"] == "ai-inference-stream-error":
+                        raise RuntimeError(f"AI bridge error: {data.get('error')}")
+
+    return "".join(chunks)
+
+
+def _apply_garden_edits(edits: list[dict]) -> list[dict]:
+    """Apply edits to README files. Returns list of results."""
+    results = []
+    for edit_group in edits:
+        path = edit_group.get("path", "")
+        title = edit_group.get("dreamnode", "")
+        reason = edit_group.get("reason", "")
+
+        if not path or not Path(path).exists():
+            results.append({"dreamnode": title, "status": "error", "reason": f"File not found: {path}"})
+            continue
+
+        readme_path = Path(path)
+        if readme_path.is_dir():
+            readme_path = readme_path / "README.md"
+
+        if not readme_path.exists():
+            results.append({"dreamnode": title, "status": "error", "reason": f"README not found: {readme_path}"})
+            continue
+
+        content = readme_path.read_text(encoding="utf-8")
+        modified = False
+
+        for edit in edit_group.get("edits", []):
+            old = edit.get("old", "")
+            new = edit.get("new", "")
+            if not old or old == new:
+                continue
+            if old in content:
+                content = content.replace(old, new, 1)
+                modified = True
+            else:
+                results.append({
+                    "dreamnode": title, "status": "warning",
+                    "reason": f"Could not find text to replace (skipped): {old[:60]}...",
+                })
+
+        if modified:
+            readme_path.write_text(content, encoding="utf-8")
+            # Git commit
+            try:
+                subprocess.run(
+                    ["git", "add", str(readme_path)],
+                    cwd=readme_path.parent, capture_output=True, timeout=10,
+                )
+                subprocess.run(
+                    ["git", "commit", "-m", f"Garden: {reason}\n\nCo-Authored-By: AURYN <auryn@dreamos.local>"],
+                    cwd=readme_path.parent, capture_output=True, timeout=10,
+                )
+            except Exception as e:
+                print(f"[Garden] Git commit failed for {title}: {e}")
+
+            results.append({"dreamnode": title, "status": "ok", "reason": reason})
+
+    return results
+
+
+async def ws_garden(request: web.Request) -> web.WebSocketResponse:
+    """WebSocket endpoint for knowledge gardening.
+
+    Expects a message: {
+        type: "garden",
+        conversation: [{role, content}, ...],
+        context: [{title, id, path}, ...]
+    }
+
+    Reads READMEs for each context node, sends everything to AI bridge,
+    applies returned edits, reports results.
+    """
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    async for msg in ws:
+        if msg.type != aiohttp.WSMsgType.TEXT:
+            continue
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            continue
+
+        if data.get("type") != "garden":
+            continue
+
+        conversation = data.get("conversation", [])
+        context_nodes = data.get("context", [])
+
+        if not conversation:
+            await ws.send_json({"type": "garden_result", "status": "empty", "message": "No conversation to garden."})
+            continue
+
+        await ws.send_json({"type": "garden_status", "message": "Reading DreamNode context..."})
+
+        # Build context block with READMEs
+        context_block = ""
+        for node in context_nodes:
+            path = node.get("path", "")
+            title = node.get("title", "")
+            node_id = node.get("id", "")
+            readme_path = Path(path) / "README.md" if path else None
+
+            if readme_path and readme_path.exists():
+                readme_content = readme_path.read_text(encoding="utf-8")
+                context_block += f"\n\n---\n### DreamNode: {title}\n- ID: {node_id}\n- Path: {path}\n- README path: {readme_path}\n\n{readme_content}"
+            else:
+                context_block += f"\n\n---\n### DreamNode: {title}\n- ID: {node_id}\n- Path: {path}\n- README: (not found)\n"
+
+        # Build the messages for the AI bridge
+        garden_messages = [
+            {"role": "system", "content": GARDEN_SYSTEM_PROMPT},
+            {"role": "user", "content": f"""Here is the loaded DreamNode context (these are the READMEs you may edit):
+
+{context_block}
+
+---
+
+Here is the conversation to extract insights from:
+
+{json.dumps(conversation, indent=2)}
+
+Analyze the conversation. For each DreamNode whose README should be updated with new insights from this conversation, produce the surgical edits. Return ONLY the JSON array."""},
+        ]
+
+        await ws.send_json({"type": "garden_status", "message": "Routing insights..."})
+
+        try:
+            response = await _ai_bridge_inference(garden_messages)
+
+            # Parse the JSON response — strip markdown fences if present
+            cleaned = response.strip()
+            if cleaned.startswith("```"):
+                cleaned = re.sub(r"^```\w*\n?", "", cleaned)
+                cleaned = re.sub(r"\n?```$", "", cleaned)
+                cleaned = cleaned.strip()
+
+            edits = json.loads(cleaned)
+
+            if not edits:
+                await ws.send_json({
+                    "type": "garden_result", "status": "no_changes",
+                    "message": "No new insights to route — READMEs are up to date.",
+                })
+                continue
+
+            await ws.send_json({"type": "garden_status", "message": f"Applying {len(edits)} edit(s)..."})
+
+            results = _apply_garden_edits(edits)
+            await ws.send_json({
+                "type": "garden_result", "status": "done",
+                "edits": results,
+                "message": f"Gardened {sum(1 for r in results if r['status'] == 'ok')} DreamNode(s).",
+            })
+
+        except json.JSONDecodeError as e:
+            await ws.send_json({
+                "type": "garden_result", "status": "error",
+                "message": f"Failed to parse AI response as JSON: {e}\n\nRaw response:\n{response[:500]}",
+            })
+        except Exception as e:
+            await ws.send_json({
+                "type": "garden_result", "status": "error",
+                "message": f"Garden error: {e}",
+            })
+
+    return ws
+
+
+# ============================================================
+# Claude Code Sub-Agent
+# ============================================================
+
+async def run_claude_code(
+    prompt: str,
+    session_id: str | None = None,
+    resume: bool = False,
+    model: str = "sonnet",
+    max_budget: float = 0.50,
+    cwd: str | None = None,
+    allowed_tools: str | None = None,
+) -> dict:
+    """Run Claude Code as a sub-agent in headless mode.
+
+    Returns parsed JSON output with result, cost, session_id, etc.
+    """
+    cmd = [
+        "claude", "-p",
+        "--output-format", "json",
+        "--dangerously-skip-permissions",
+        "--model", model,
+        "--max-budget-usd", str(max_budget),
+    ]
+
+    if resume and session_id:
+        cmd.extend(["--resume", session_id])
+    elif session_id:
+        cmd.extend(["--session-id", session_id])
+
+    if allowed_tools:
+        cmd.extend(["--allowedTools", allowed_tools])
+
+    cmd.append(prompt)
+
+    env = os.environ.copy()
+    env.pop("CLAUDECODE", None)  # Allow nested sessions
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=cwd or str(AURYN_DIR),
+        env=env,
+    )
+    stdout, stderr = await proc.communicate()
+
+    output = stdout.decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(output)
+        # Extract the result from the JSON array
+        if isinstance(parsed, list):
+            for item in parsed:
+                if item.get("type") == "result":
+                    return item
+            return {"type": "result", "raw": parsed}
+        return parsed
+    except json.JSONDecodeError:
+        return {
+            "type": "result", "is_error": True,
+            "result": output or stderr.decode("utf-8", errors="replace"),
+        }
+
+
 def create_app(
     host: str, port: int, model: str, ollama_url: str,
     claude_api_key: str = "", models: list[str] | None = None,
@@ -1596,6 +1902,7 @@ def create_app(
 
     app.router.add_get("/ws", ws_inference)
     app.router.add_get("/ws/transcribe", ws_transcribe)
+    app.router.add_get("/ws/garden", ws_garden)
     app.router.add_post("/upload/audio", handle_audio_upload)
     app.router.add_get("/install-cert", handle_install_cert)
     app.router.add_get("/", handle_index)
@@ -1669,6 +1976,90 @@ async def serve(args: argparse.Namespace) -> None:
         await runner.cleanup()
 
 
+async def _run_garden_cli(args: argparse.Namespace) -> None:
+    """CLI entry point for knowledge gardening."""
+    import sys
+
+    # Read conversation text
+    if args.input:
+        text = Path(args.input).read_text() if Path(args.input).exists() else args.input
+    else:
+        text = sys.stdin.read()
+
+    if not text.strip():
+        print("No input provided. Pipe conversation text or use --input.")
+        return
+
+    # Parse context nodes
+    context_nodes = []
+    for spec in (args.context or []):
+        if ":" in spec:
+            title, path = spec.split(":", 1)
+            context_nodes.append({"title": title, "id": "", "path": path})
+        else:
+            context_nodes.append({"title": spec, "id": "", "path": str(VAULT_DIR / spec)})
+
+    # Build context block
+    context_block = ""
+    for node in context_nodes:
+        path = node["path"]
+        title = node["title"]
+        readme_path = Path(path) / "README.md" if Path(path).is_dir() else Path(path)
+        if readme_path.exists():
+            content = readme_path.read_text(encoding="utf-8")
+            context_block += f"\n\n---\n### DreamNode: {title}\n- Path: {path}\n- README path: {readme_path}\n\n{content}"
+
+    messages = [
+        {"role": "system", "content": GARDEN_SYSTEM_PROMPT},
+        {"role": "user", "content": f"""DreamNode context:\n{context_block}\n\n---\n\nConversation:\n{text}\n\nProduce the JSON array of edits."""},
+    ]
+
+    print("[Garden] Sending to AI bridge...")
+    try:
+        response = await _ai_bridge_inference(messages)
+        cleaned = response.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```\w*\n?", "", cleaned)
+            cleaned = re.sub(r"\n?```$", "", cleaned)
+            cleaned = cleaned.strip()
+
+        edits = json.loads(cleaned)
+        if not edits:
+            print("[Garden] No edits needed — READMEs are up to date.")
+            return
+
+        print(f"[Garden] Applying {len(edits)} edit group(s)...")
+        results = _apply_garden_edits(edits)
+        for r in results:
+            status = r["status"].upper()
+            print(f"  [{status}] {r['dreamnode']}: {r['reason']}")
+
+    except Exception as e:
+        print(f"[Garden] Error: {e}")
+
+
+async def _run_claude_cli(args: argparse.Namespace) -> None:
+    """CLI entry point for Claude Code sub-agent."""
+    result = await run_claude_code(
+        prompt=args.prompt,
+        session_id=args.session_id,
+        resume=args.resume,
+        model=args.model,
+        max_budget=args.budget,
+        cwd=args.cwd,
+    )
+
+    if result.get("is_error"):
+        print(f"Error: {result.get('result', 'Unknown error')}")
+    else:
+        print(result.get("result", json.dumps(result, indent=2)))
+
+    if result.get("session_id"):
+        print(f"\nSession ID: {result['session_id']}")
+    if result.get("total_cost_usd"):
+        print(f"Cost: ${result['total_cost_usd']:.4f}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="AURYN self-serving server + context provider")
     sub = parser.add_subparsers(dest="command")
@@ -1697,6 +2088,21 @@ def main() -> None:
     idx_parser = sub.add_parser("index", help="Build/rebuild the context index")
     idx_parser.add_argument("--force", action="store_true", help="Force rebuild")
 
+    # --- garden ---
+    garden_parser = sub.add_parser("garden", help="Knowledge garden: route insights to DreamNode READMEs")
+    garden_parser.add_argument("--context", nargs="+", metavar="TITLE:PATH",
+                               help="DreamNode context as title:path pairs")
+    garden_parser.add_argument("--input", help="Conversation text or file path (default: stdin)")
+
+    # --- claude ---
+    claude_parser = sub.add_parser("claude", help="Run Claude Code as sub-agent")
+    claude_parser.add_argument("prompt", help="Prompt for Claude Code")
+    claude_parser.add_argument("--session-id", help="Session ID for continuity")
+    claude_parser.add_argument("--resume", action="store_true", help="Resume previous session")
+    claude_parser.add_argument("--model", default="sonnet", help="Model (default: sonnet)")
+    claude_parser.add_argument("--budget", type=float, default=0.50, help="Max budget USD")
+    claude_parser.add_argument("--cwd", help="Working directory")
+
     args = parser.parse_args()
 
     if args.command == "serve":
@@ -1711,6 +2117,10 @@ def main() -> None:
         run_context(args)
     elif args.command == "index":
         run_index(args)
+    elif args.command == "garden":
+        asyncio.run(_run_garden_cli(args))
+    elif args.command == "claude":
+        asyncio.run(_run_claude_cli(args))
     else:
         parser.print_help()
 

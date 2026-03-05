@@ -200,6 +200,7 @@
     justify-content: center; flex-shrink: 0;
   }
   #send-btn { background: #FFD700; color: #000; }
+  #send-btn.garden-mode { background: #2d5a27; color: #7fff7f; }
   #send-btn:disabled { background: #333; color: #666; cursor: default; }
   #send-btn svg { width: 18px; height: 18px; }
   #stop-btn { background: #8B0000; color: #fff; display: none; }
@@ -370,7 +371,7 @@ let transcriptionWs = null;
 let transcriptMsg = null; // the active transcript message object
 
 // Context state — DreamNodes loaded into context
-let contextNodes = []; // array of { id, title, type, dreamTalkUrl, repoPath }
+let contextNodes = []; // array of { id, title, type, dreamTalkUrl, repoPath, absPath }
 
 // Autocomplete state
 let acVisible = false;
@@ -462,11 +463,13 @@ function addToContext(node) {
   if (contextNodes.find(n => n.id === node.id)) return; // already in context
   contextNodes.push(node);
   renderPetals();
+  updateSendButton();
 }
 
 function removeFromContext(nodeId) {
   contextNodes = contextNodes.filter(n => n.id !== nodeId);
   renderPetals();
+  updateSendButton();
 }
 
 function renderPetals() {
@@ -1268,7 +1271,7 @@ function finishStream(error) {
   currentRequestId = null;
   sendBtn.style.display = '';
   stopBtn.style.display = 'none';
-  sendBtn.disabled = false;
+  updateSendButton();
 
   if (activeMsg) {
     finishAnimatedMessage(activeMsg, error);
@@ -1380,6 +1383,7 @@ function connectTranscriptionWs() {
         // A DreamNode name was recognized in the transcript — add to context petals
         const node = findCatalogNode(data.folder, data.title, data.uuid);
         if (node) {
+          if (data.path) node.absPath = data.path;
           addToContext(node);
           console.log('[AURYN] DreamNode detected in voice:', node.title);
         }
@@ -1586,9 +1590,124 @@ async function transcribeFile(file) {
 }
 
 // ============================================================
+// 9b. KNOWLEDGE GARDENING
+// ============================================================
+
+const SEND_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
+const GARDEN_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 22c4.97 0 9-4.03 9-9-4.97 0-9 4.03-9 9zM5.6 10.25c0 1.38 1.12 2.5 2.5 2.5.53 0 1.01-.16 1.42-.44l-.02.19c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5l-.02-.19c.4.28.89.44 1.42.44 1.38 0 2.5-1.12 2.5-2.5 0-1-.59-1.85-1.43-2.25.84-.4 1.43-1.25 1.43-2.25 0-1.38-1.12-2.5-2.5-2.5-.53 0-1.01.16-1.42.44l.02-.19C14.5 2.12 13.38 1 12 1S9.5 2.12 9.5 3.5l.02.19c-.4-.28-.89-.44-1.42-.44-1.38 0-2.5 1.12-2.5 2.5 0 1 .59 1.85 1.43 2.25-.84.4-1.43 1.25-1.43 2.25zM12 5.5c1.38 0 2.5 1.12 2.5 2.5s-1.12 2.5-2.5 2.5S9.5 9.38 9.5 8s1.12-2.5 2.5-2.5zM3 13c0 4.97 4.03 9 9 9-4.97 0-9-4.03-9-9z"/></svg>';
+
+let gardenWs = null;
+let isGardening = false;
+
+function updateSendButton() {
+  const hasText = inputEl.value.trim().length > 0;
+  const hasContext = contextNodes.length > 0;
+  if (!hasText && hasContext && !isStreaming && !isGardening) {
+    sendBtn.innerHTML = GARDEN_ICON;
+    sendBtn.classList.add('garden-mode');
+    sendBtn.title = 'Garden — route insights to DreamNodes';
+    sendBtn.disabled = false;
+  } else {
+    sendBtn.innerHTML = SEND_ICON;
+    sendBtn.classList.remove('garden-mode');
+    sendBtn.title = 'Send';
+    sendBtn.disabled = isStreaming;
+  }
+}
+
+function getGardenWsUrl() {
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${window.location.host}/ws/garden`;
+}
+
+function startGardening() {
+  if (isGardening || conversation.length === 0) return;
+  if (contextNodes.length === 0) return;
+
+  isGardening = true;
+  sendBtn.disabled = true;
+
+  // Show gardening status in chat
+  const statusMsg = document.createElement('div');
+  statusMsg.className = 'msg assistant';
+  statusMsg.id = 'garden-status';
+  statusMsg.textContent = 'Gardening...';
+  messagesEl.appendChild(statusMsg);
+  scrollToBottom();
+
+  try {
+    const ws = new WebSocket(getGardenWsUrl());
+    gardenWs = ws;
+
+    ws.onopen = () => {
+      // Send the full conversation + context with paths
+      const context = contextNodes.map(n => ({
+        title: n.title,
+        id: n.id,
+        path: n.absPath || '',
+      }));
+
+      ws.send(JSON.stringify({
+        type: 'garden',
+        conversation: conversation,
+        context: context,
+      }));
+    };
+
+    ws.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      const el = document.getElementById('garden-status');
+
+      if (data.type === 'garden_status') {
+        if (el) el.textContent = data.message;
+      } else if (data.type === 'garden_result') {
+        if (el) {
+          let text = data.message || 'Done.';
+          if (data.edits) {
+            text += '\n\n';
+            for (const edit of data.edits) {
+              const icon = edit.status === 'ok' ? '✓' : edit.status === 'warning' ? '⚠' : '✗';
+              text += `${icon} ${edit.dreamnode}: ${edit.reason}\n`;
+            }
+          }
+          el.textContent = text;
+        }
+        finishGardening();
+      }
+    };
+
+    ws.onerror = () => {
+      const el = document.getElementById('garden-status');
+      if (el) el.textContent = 'Garden error — could not connect.';
+      finishGardening();
+    };
+
+    ws.onclose = () => { gardenWs = null; };
+
+  } catch (e) {
+    const el = document.getElementById('garden-status');
+    if (el) el.textContent = 'Garden error: ' + e.message;
+    finishGardening();
+  }
+}
+
+function finishGardening() {
+  isGardening = false;
+  if (gardenWs) { gardenWs.close(); gardenWs = null; }
+  updateSendButton();
+}
+
+// ============================================================
 // 10. EVENT HANDLERS
 // ============================================================
-sendBtn.addEventListener('click', () => sendMessage());
+sendBtn.addEventListener('click', () => {
+  const hasText = inputEl.value.trim().length > 0;
+  if (hasText) {
+    sendMessage();
+  } else if (contextNodes.length > 0) {
+    startGardening();
+  }
+});
 stopBtn.addEventListener('click', () => { cancelStream(); });
 
 micBtn.addEventListener('click', () => {
@@ -1628,13 +1747,19 @@ inputEl.addEventListener('keydown', (e) => {
 
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    sendMessage();
+    const hasText = inputEl.value.trim().length > 0;
+    if (hasText) {
+      sendMessage();
+    } else if (contextNodes.length > 0) {
+      startGardening();
+    }
   }
 });
 
 inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+  updateSendButton();
 
   // Check for @ autocomplete trigger
   const text = inputEl.value;
