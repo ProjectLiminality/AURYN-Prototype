@@ -5,6 +5,8 @@
 #     "mlx-whisper>=0.4",
 # ]
 # ///
+# NOTE: dependencies are commented out above because uv resolves them
+# from a cached environment. Uncomment if starting from a clean install.
 """
 AURYN self-serving server + fast context provider.
 
@@ -42,6 +44,9 @@ TRANSCRIPTS_DIR = AURYN_DIR / "transcripts"
 VAULT_DIR = AURYN_DIR.parent  # RealDealVault
 INDEX_DIR = Path.home() / ".auryn"
 INDEX_FILE = INDEX_DIR / "context-index.pkl"
+CONTEXT_DIR = INDEX_DIR / "context"  # Ephemeral file uploads (auto-cleaned after 7 days)
+CONTEXT_MAX_AGE_DAYS = 7
+CHATS_DIR = AURYN_DIR / "chats"
 
 
 # ============================================================
@@ -596,6 +601,8 @@ async def ws_inference(request: web.Request) -> web.WebSocketResponse:
     for task in active_tasks.values():
         task.cancel()
     active_tasks.clear()
+    # Safety net: kill any Claude Code subprocesses that survived task cancellation
+    _kill_all_cc_procs()
     return ws
 
 
@@ -715,7 +722,8 @@ AURYN_TOOLS = [
             "bash execution, file editing, and deep codebase analysis. Use this for tasks that "
             "require reading/writing files, running commands, or deep technical work in a DreamNode. "
             "Claude Code runs autonomously and returns a complete result. "
-            "Only use when the task genuinely requires file system access or execution."
+            "Only use when the task genuinely requires file system access or execution. "
+            "Sessions automatically continue per directory — Claude Code remembers previous work in each DreamNode."
         ),
         "input_schema": {
             "type": "object",
@@ -769,20 +777,58 @@ def _execute_search_dreamnodes(query: str, top_k: int = 8, include_readme: bool 
         return f"Search error: {e}"
 
 
-async def _execute_run_claude_code(prompt: str, dreamnode_path: str | None = None) -> str:
-    """Execute run_claude_code tool."""
+def _load_chat_history_text(thread_id: str = "current") -> str:
+    """Read chat history from disk and format it as a labeled block for Claude Code."""
+    chat_file = CHATS_DIR / f"{thread_id}.json"
+    if not chat_file.exists():
+        return ""
     try:
-        cwd = dreamnode_path if dreamnode_path and Path(dreamnode_path).is_dir() else str(AURYN_DIR)
+        data = json.loads(chat_file.read_text())
+        messages = data.get("messages", [])
+        if not messages:
+            return ""
+        lines = []
+        for m in messages:
+            role = "David" if m["role"] == "user" else "AURYN"
+            lines.append(f"{role}: {m['content']}")
+        return "\n\n".join(lines)
+    except Exception:
+        return ""
+
+
+async def _execute_run_claude_code(prompt: str, dreamnode_path: str | None = None) -> str:
+    """Execute run_claude_code tool. Session continuity is automatic via --continue + cwd."""
+    try:
+        is_auryn_local = not dreamnode_path or not Path(dreamnode_path).is_dir()
+        cwd = str(AURYN_DIR) if is_auryn_local else dreamnode_path
+
+        # In AURYN-local mode, prepend full chat history so Claude Code has full context
+        if is_auryn_local:
+            history = _load_chat_history_text()
+            if history:
+                prompt = (
+                    "=== AURYN CHAT HISTORY ===\n"
+                    + history
+                    + "\n=== END CHAT HISTORY ===\n\n"
+                    "Your directive:\n"
+                    + prompt
+                )
+
         result = await run_claude_code(
             prompt=prompt,
             model="sonnet",
-            max_budget=1.00,
+            max_budget=5.00,
             cwd=cwd,
             allowed_tools="Bash Read Edit Write Grep Glob",
         )
         response = result.get("result", "")
         is_error = result.get("is_error", False)
+        subtype = result.get("subtype", "")
         cost = result.get("total_cost_usd", 0)
+
+        if subtype == "error_max_budget_usd":
+            return f"**Claude Code** hit session budget limit (${cost:.2f} accumulated). The continued session has used its budget — clear chat or start a fresh task."
+
         prefix = "**Claude Code error:**\n" if is_error else f"**Claude Code result** (${cost:.4f}):\n"
         return prefix + (response or "(no output)")
     except Exception as e:
@@ -1003,7 +1049,8 @@ async def _stream_claude(
         })
 
     except asyncio.CancelledError:
-        pass
+        # Session cancelled (stop button or disconnect) — kill any active Claude Code subprocess
+        _kill_all_cc_procs()
     except Exception as e:
         try:
             await ws.send_json({
@@ -1032,45 +1079,15 @@ _MLX_WHISPER_MODELS = {
 }
 _whisper_model_size = "base"
 _whisper_repo: str = _MLX_WHISPER_MODELS["base"]
-_whisper_warmed_up = False
-_whisper_lock = asyncio.Lock()
-
-
-async def _warm_up_whisper():
-    """Pre-download the model on first use so subsequent calls are fast."""
-    global _whisper_warmed_up
-    if _whisper_warmed_up:
-        return
-    async with _whisper_lock:
-        if _whisper_warmed_up:
-            return
-        import mlx_whisper
-        print(f"[Whisper] Warming up {_whisper_model_size} model ({_whisper_repo})...")
-        loop = asyncio.get_event_loop()
-        # Transcribe a tiny silent WAV to trigger model download/cache
-        silent = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        silent.close()
-        await asyncio.create_subprocess_exec(
-            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
-            "-t", "0.5", "-ar", "16000", "-ac", "1", silent.name,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            await loop.run_in_executor(
-                None,
-                lambda: mlx_whisper.transcribe(
-                    silent.name, path_or_hf_repo=_whisper_repo, language="en",
-                ),
-            )
-        except Exception:
-            pass
-        finally:
-            try:
-                os.unlink(silent.name)
-            except OSError:
-                pass
-        _whisper_warmed_up = True
-        print("[Whisper] Model ready.")
+def _transcribe_sync(wav_path: str, prompt: str = "") -> dict:
+    """Synchronous Whisper transcription. Called from run_in_executor."""
+    import mlx_whisper
+    return mlx_whisper.transcribe(
+        wav_path,
+        path_or_hf_repo=_whisper_repo,
+        language="en",
+        initial_prompt=prompt or None,
+    )
 
 
 async def _probe_duration_file(path: str) -> float | None:
@@ -1088,13 +1105,16 @@ async def _probe_duration_file(path: str) -> float | None:
         return None
 
 
-async def _extract_time_range_file(path: str, start_sec: float) -> str | None:
-    """Extract audio from start_sec to end into a WAV file."""
+async def _extract_time_range_file(path: str, start_sec: float, max_duration: float | None = None) -> str | None:
+    """Extract audio from start_sec into a WAV file. Optionally limit duration."""
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp.close()
+    cmd = ["ffmpeg", "-y", "-ss", f"{start_sec:.2f}", "-i", path]
+    if max_duration is not None:
+        cmd.extend(["-t", f"{max_duration:.2f}"])
+    cmd.extend(["-ar", "16000", "-ac", "1", tmp.name])
     proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-y", "-ss", f"{start_sec:.2f}", "-i", path,
-        "-ar", "16000", "-ac", "1", tmp.name,
+        *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -1207,12 +1227,11 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    import mlx_whisper
-    await _warm_up_whisper()
     loop = asyncio.get_event_loop()
 
     session_id: str | None = None
     audio_file = None
+    orig_filename: str = ""
     transcript_parts: list[str] = []
     start_time: float = 0.0
     cumulative_webm = bytearray()
@@ -1446,12 +1465,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 
                 result = await loop.run_in_executor(
                     None,
-                    lambda p=prompt: mlx_whisper.transcribe(
-                        wav_path,
-                        path_or_hf_repo=_whisper_repo,
-                        language="en",
-                        initial_prompt=p,
-                    ),
+                    lambda p=prompt, w=wav_path: _transcribe_sync(w, p),
                 )
 
                 # Skip segments in the overlap region — they belong to
@@ -1514,8 +1528,15 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 
                 ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-                audio_file = RECORDINGS_DIR / f"{ts}.webm"
-                _start_transcript_session(f"{ts}.webm", start_time)
+                # Use the original filename's extension if provided (file drops),
+                # default to .webm for live mic recording
+                orig_filename = data.get("filename", "")
+                if orig_filename:
+                    ext = Path(orig_filename).suffix or ".webm"
+                else:
+                    ext = ".webm"
+                audio_file = RECORDINGS_DIR / f"{ts}{ext}"
+                _start_transcript_session(f"{ts}{ext}", start_time)
 
                 process_task = asyncio.create_task(periodic_transcribe())
                 await ws.send_json({"type": "session_started", "session_id": session_id})
@@ -1530,7 +1551,11 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                     process_task = None
 
                 # Final transcription pass — only the tail not yet transcribed
-                if audio_file and audio_file.exists() and last_transcribed_sec < (time.time() - start_time - 1):
+                # Use actual file duration (not wall clock) to handle file drops
+                # where all bytes arrive instantly
+                file_duration = await _probe_duration_file(str(audio_file)) if audio_file and audio_file.exists() else None
+                elapsed = max(time.time() - start_time, file_duration or 0)
+                if audio_file and audio_file.exists() and last_transcribed_sec < (elapsed - 1):
                     wav_path = await _extract_time_range_file(
                         str(audio_file), last_transcribed_sec
                     )
@@ -1543,12 +1568,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 
                             result = await loop.run_in_executor(
                                 None,
-                                lambda: mlx_whisper.transcribe(
-                                    wav_path,
-                                    path_or_hf_repo=_whisper_repo,
-                                    language="en",
-                                    initial_prompt=prompt,
-                                ),
+                                lambda: _transcribe_sync(wav_path, prompt),
                             )
 
                             new_text = " ".join(
@@ -1569,13 +1589,25 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                             except OSError:
                                 pass
 
+                # For file drops (not mic recordings), copy to context dir
+                # so AURYN knows the persistent path
+                context_path = None
+                if orig_filename and audio_file and audio_file.exists():
+                    CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
+                    context_dest = CONTEXT_DIR / audio_file.name
+                    shutil.copy2(str(audio_file), str(context_dest))
+                    context_path = str(context_dest)
+
                 # Send final state: all pinned DreamNodes from the session
                 full_text = " ".join(transcript_parts)
-                await ws.send_json({
+                response: dict = {
                     "type": "stream_ended",
                     "full_text": full_text,
                     "pinned_dreamnodes": pinned_vocab,
-                })
+                }
+                if context_path:
+                    response["file_path"] = context_path
+                await ws.send_json(response)
                 session_id = None
 
         elif msg.type == aiohttp.WSMsgType.BINARY:
@@ -1597,44 +1629,8 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 # Audio upload (POST /upload/audio) — Whisper with vocabulary
 # ============================================================
 
-async def handle_audio_upload(request: web.Request) -> web.Response:
-    reader = await request.multipart()
-    field = await reader.next()
-    if field is None or field.name != "file":
-        return web.json_response({"error": "Expected 'file' field"}, status=400)
-
-    filename = field.filename or "audio.webm"
-    ext = Path(filename).suffix or ".webm"
-
-    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
-        while True:
-            chunk = await field.read_chunk()
-            if chunk is None:
-                break
-            f.write(chunk)
-        tmp_path = f.name
-
-    try:
-        import mlx_whisper
-        await _warm_up_whisper()
-        vocab_prompt = _build_vocab_prompt()
-
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: mlx_whisper.transcribe(
-                tmp_path,
-                path_or_hf_repo=_whisper_repo,
-                language="en",
-                initial_prompt=vocab_prompt,
-            ),
-        )
-        text = " ".join(s["text"].strip() for s in result["segments"])
-        if not text:
-            return web.json_response({"error": "Whisper produced no output"}, status=500)
-        return web.json_response({"text": text})
-    finally:
-        os.unlink(tmp_path)
+## handle_audio_upload removed — file transcription now uses the same
+## WebSocket pipeline (/ws/transcribe) as live mic recording.
 
 
 # ============================================================
@@ -1658,6 +1654,137 @@ async def handle_static(request: web.Request) -> web.StreamResponse:
         raise web.HTTPNotFound()
 
     return web.FileResponse(file_path)
+
+
+# ============================================================
+# File Upload & Context Directory
+# ============================================================
+
+def _cleanup_context_dir() -> int:
+    """Remove files older than CONTEXT_MAX_AGE_DAYS from CONTEXT_DIR. Returns count removed."""
+    if not CONTEXT_DIR.exists():
+        return 0
+    cutoff = time.time() - CONTEXT_MAX_AGE_DAYS * 86400
+    removed = 0
+    for f in CONTEXT_DIR.iterdir():
+        if f.is_file() and f.stat().st_mtime < cutoff:
+            f.unlink()
+            removed += 1
+    return removed
+
+
+def _save_to_context(filename: str, data: bytes) -> Path:
+    """Save uploaded file to context directory with timestamp prefix. Returns the saved path."""
+    CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # Sanitize filename: keep only the basename, replace spaces with underscores
+    safe_name = Path(filename).name.replace(" ", "_")
+    dest = CONTEXT_DIR / f"{ts}_{safe_name}"
+    dest.write_bytes(data)
+    return dest
+
+
+async def handle_upload(request: web.Request) -> web.Response:
+    """Accept any file upload via multipart POST. Saves to ~/.auryn/context/ and returns the path."""
+    reader = await request.multipart()
+    saved_files = []
+
+    async for field in reader:
+        if field.filename:
+            data = await field.read(decode=False)
+            dest = _save_to_context(field.filename, data)
+            saved_files.append({
+                "filename": field.filename,
+                "path": str(dest),
+                "size": len(data),
+            })
+
+    if not saved_files:
+        return web.json_response({"error": "No files received"}, status=400)
+
+    return web.json_response({"files": saved_files})
+
+
+async def handle_context_files(request: web.Request) -> web.Response:
+    """List all files in the context directory."""
+    if not CONTEXT_DIR.exists():
+        return web.json_response({"files": []})
+
+    files = []
+    for f in sorted(CONTEXT_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if f.is_file():
+            stat = f.stat()
+            files.append({
+                "path": str(f),
+                "name": f.name,
+                "size": stat.st_size,
+                "modified": stat.st_mtime,
+            })
+    return web.json_response({"files": files})
+
+
+async def handle_catalog(request: web.Request) -> web.Response:
+    """Return the full DreamNode catalog from the vault (id, title, type, path)."""
+    nodes = discover_nodes()
+    catalog = [
+        {
+            "id": n["uuid"],
+            "title": n["title"],
+            "type": n["type"],
+            "repoPath": n["folder"],
+            "path": n["path"],
+        }
+        for n in nodes
+    ]
+    return web.json_response({"nodes": catalog, "count": len(catalog)})
+
+
+# ============================================================
+# Chat History Persistence
+# ============================================================
+
+
+async def handle_chat_save(request: web.Request) -> web.Response:
+    """Save conversation to disk. Body: { messages: [...], threadId?: string }"""
+    data = await request.json()
+    messages = data.get("messages", [])
+    thread_id = data.get("threadId", "current")
+
+    CHATS_DIR.mkdir(exist_ok=True)
+    chat_file = CHATS_DIR / f"{thread_id}.json"
+    chat_file.write_text(json.dumps({
+        "threadId": thread_id,
+        "messages": messages,
+        "savedAt": datetime.now().isoformat(),
+    }, indent=2))
+
+    return web.json_response({"ok": True, "path": str(chat_file)})
+
+
+async def handle_chat_load(request: web.Request) -> web.Response:
+    """Load the current conversation thread."""
+    thread_id = request.query.get("threadId", "current")
+    chat_file = CHATS_DIR / f"{thread_id}.json"
+
+    if not chat_file.exists():
+        return web.json_response({"messages": [], "threadId": thread_id})
+
+    data = json.loads(chat_file.read_text())
+    return web.json_response(data)
+
+
+async def handle_chat_clear(request: web.Request) -> web.Response:
+    """Clear the current thread (archives it with timestamp, starts fresh)."""
+    thread_id = (await request.json()).get("threadId", "current")
+    chat_file = CHATS_DIR / f"{thread_id}.json"
+
+    if chat_file.exists():
+        # Archive with timestamp so history is never lost
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        archive = CHATS_DIR / f"{thread_id}_{ts}.json"
+        chat_file.rename(archive)
+
+    return web.json_response({"ok": True, "archived": True})
 
 
 # ============================================================
@@ -2154,17 +2281,31 @@ Analyze the conversation. For each DreamNode whose README should be updated with
 # Claude Code Sub-Agent
 # ============================================================
 
+# Registry of active Claude Code subprocesses — keyed by asyncio task id
+_active_cc_procs: dict[int, asyncio.subprocess.Process] = {}
+
+
+def _kill_all_cc_procs():
+    """Kill all active Claude Code subprocesses."""
+    for proc in list(_active_cc_procs.values()):
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass
+    _active_cc_procs.clear()
+
+
 async def run_claude_code(
     prompt: str,
-    session_id: str | None = None,
-    resume: bool = False,
     model: str = "sonnet",
-    max_budget: float = 0.50,
+    max_budget: float = 5.00,
     cwd: str | None = None,
     allowed_tools: str | None = None,
 ) -> dict:
     """Run Claude Code as a sub-agent in headless mode.
 
+    Always uses --continue to resume the most recent session in the cwd.
+    The working directory IS the session key — each DreamNode gets its own thread.
     Returns parsed JSON output with result, cost, session_id, etc.
     """
     cmd = [
@@ -2173,18 +2314,12 @@ async def run_claude_code(
         "--dangerously-skip-permissions",
         "--model", model,
         "--max-budget-usd", str(max_budget),
+        "--continue",
     ]
-
-    if resume and session_id:
-        cmd.extend(["--resume", session_id])
-    elif session_id:
-        cmd.extend(["--session-id", session_id])
 
     if allowed_tools:
         for tool in allowed_tools.split():
             cmd.extend(["--allowedTools", tool])
-
-    # Pass prompt via stdin to avoid shell argument length limits
 
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)  # Allow nested sessions
@@ -2197,7 +2332,26 @@ async def run_claude_code(
         cwd=cwd or str(AURYN_DIR),
         env=env,
     )
-    stdout, stderr = await proc.communicate(input=prompt.encode("utf-8"))
+
+    # Register so it can be killed on session cancel/disconnect
+    task_id = id(asyncio.current_task())
+    _active_cc_procs[task_id] = proc
+
+    try:
+        stdout, stderr = await proc.communicate(input=prompt.encode("utf-8"))
+    except asyncio.CancelledError:
+        # Session was cancelled — kill the subprocess
+        try:
+            proc.terminate()
+            await asyncio.wait_for(proc.wait(), timeout=3)
+        except (ProcessLookupError, asyncio.TimeoutError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        raise
+    finally:
+        _active_cc_procs.pop(task_id, None)
 
     output = stdout.decode("utf-8", errors="replace")
     try:
@@ -2260,8 +2414,6 @@ async def ws_claude(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    active_session_id: str | None = None
-
     async for msg in ws:
         if msg.type != aiohttp.WSMsgType.TEXT:
             continue
@@ -2312,15 +2464,12 @@ async def ws_claude(request: web.Request) -> web.WebSocketResponse:
         try:
             result = await run_claude_code(
                 prompt=full_prompt,
-                session_id=active_session_id,
-                resume=bool(active_session_id),
                 model="sonnet",
                 max_budget=1.00,
                 cwd=str(AURYN_DIR),
                 allowed_tools="Bash Read Edit Write Grep Glob",
             )
 
-            active_session_id = result.get("session_id", active_session_id)
             response_text = result.get("result", "")
             cost = result.get("total_cost_usd", 0)
             is_error = result.get("is_error", False)
@@ -2329,7 +2478,6 @@ async def ws_claude(request: web.Request) -> web.WebSocketResponse:
                 "type": "claude_result",
                 "status": "error" if is_error else "done",
                 "message": response_text,
-                "session_id": active_session_id,
                 "cost": cost,
             })
 
@@ -2361,7 +2509,12 @@ def create_app(
     app.router.add_get("/ws/transcribe", ws_transcribe)
     app.router.add_get("/ws/garden", ws_garden)
     app.router.add_get("/ws/claude", ws_claude)
-    app.router.add_post("/upload/audio", handle_audio_upload)
+    app.router.add_post("/upload", handle_upload)
+    app.router.add_get("/context-files", handle_context_files)
+    app.router.add_get("/catalog", handle_catalog)
+    app.router.add_post("/chat/save", handle_chat_save)
+    app.router.add_get("/chat/load", handle_chat_load)
+    app.router.add_post("/chat/clear", handle_chat_clear)
     app.router.add_post("/reload", handle_reload)
     app.router.add_get("/install-cert", handle_install_cert)
     app.router.add_get("/", handle_index)
@@ -2371,6 +2524,11 @@ def create_app(
 
 
 async def serve(args: argparse.Namespace) -> None:
+    # Clean up old context files on startup
+    removed = _cleanup_context_dir()
+    if removed:
+        print(f"[Context] Cleaned {removed} file(s) older than {CONTEXT_MAX_AGE_DAYS} days")
+
     ollama_ok = await check_ollama(args.ollama_url)
     ollama_status = "\u2713" if ollama_ok else "\u2717 (not reachable)"
 
@@ -2501,8 +2659,6 @@ async def _run_claude_cli(args: argparse.Namespace) -> None:
     """CLI entry point for Claude Code sub-agent."""
     result = await run_claude_code(
         prompt=args.prompt,
-        session_id=args.session_id,
-        resume=args.resume,
         model=args.model,
         max_budget=args.budget,
         cwd=args.cwd,
@@ -2556,11 +2712,9 @@ def main() -> None:
     # --- claude ---
     claude_parser = sub.add_parser("claude", help="Run Claude Code as sub-agent")
     claude_parser.add_argument("prompt", help="Prompt for Claude Code")
-    claude_parser.add_argument("--session-id", help="Session ID for continuity")
-    claude_parser.add_argument("--resume", action="store_true", help="Resume previous session")
     claude_parser.add_argument("--model", default="sonnet", help="Model (default: sonnet)")
     claude_parser.add_argument("--budget", type=float, default=0.50, help="Max budget USD")
-    claude_parser.add_argument("--cwd", help="Working directory")
+    claude_parser.add_argument("--cwd", help="Working directory (session continues per directory)")
 
     args = parser.parse_args()
 

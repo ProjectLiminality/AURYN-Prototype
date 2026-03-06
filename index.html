@@ -121,19 +121,20 @@
   .msg.transcript {
     align-self: flex-start; width: 100%; position: relative; padding: 0;
   }
-  .msg.tool-call-block {
-    align-self: flex-start; width: 100%;
+  .tool-call-block {
+    width: 100%;
     background: #0d1117; border-left: 3px solid #334;
     border-radius: 6px; padding: 8px 12px; font-size: 0.85em;
     color: #aaa; font-family: monospace;
+    margin: 8px 0;
   }
-  .msg.tool-call-block .tool-name {
+  .tool-call-block .tool-name {
     color: #7aadff; font-weight: bold; margin-bottom: 4px;
   }
-  .msg.tool-call-block details { margin-top: 4px; }
-  .msg.tool-call-block summary { cursor: pointer; opacity: 0.7; }
-  .msg.tool-call-block summary:hover { opacity: 1; }
-  .msg.tool-call-block pre {
+  .tool-call-block details { margin-top: 4px; }
+  .tool-call-block summary { cursor: pointer; opacity: 0.7; }
+  .tool-call-block summary:hover { opacity: 1; }
+  .tool-call-block pre {
     white-space: pre-wrap; margin: 6px 0 0;
     max-height: 300px; overflow-y: auto;
     font-size: 0.9em; color: #ccc;
@@ -334,6 +335,7 @@
 <body>
 <div id="connection-status"></div>
 <div id="top-toolbar">
+<button id="clear-chat-btn" onclick="clearChat()" title="Clear chat (archives current thread)">clear</button>
 <button id="reload-btn" onclick="reloadServer()" title="Restart AURYN server">reload</button>
 </div>
 
@@ -364,7 +366,7 @@
 </div>
 
 <div id="vocab-debug"></div>
-<div id="drop-overlay">Drop audio file to transcribe</div>
+<div id="drop-overlay">Drop files to add context</div>
 <div id="fallback-msg">
   Open in the <span class="accent">InterBrain</span> to chat with AURYN
 </div>
@@ -390,6 +392,7 @@ const aurynSymbol = document.getElementById('auryn-symbol');
 
 let conversation = [];
 let isStreaming = false;
+let chatThreadId = 'current';
 let currentRequestId = null;
 let font = null;
 let fontLoaded = false;
@@ -418,38 +421,99 @@ const SYSTEM_PROMPT = `You are AURYN, the cultivation layer of DreamOS. Named af
 
 You help users tend their knowledge garden: creating DreamNodes, weaving DreamSongs, discovering connections through semantic search, and nurturing visions from seeds to harvest. You speak with warmth and clarity, like a wise gardener who knows the soil intimately.
 
+**File context system**: Users can drag and drop files into the chat. Audio files are transcribed and added as context. All other files (images, PDFs, documents) are uploaded and persisted in ~/.auryn/context/ with their server path included in the message. Files persist for 7 days, then auto-clean.
+
+When a file is added to context, you know its exact server path. You can:
+- Reference the file content in your responses
+- Use run_claude_code to move, rename, or route the file into a DreamNode if it belongs there
+- Treat it as ephemeral context if it's just informational
+
+The user doesn't need to decide upfront whether a file is temporary or permanent. Everything lands in context first. You intelligently determine if a file should be routed to a DreamNode based on the conversation.
+
 Keep responses concise and grounded. Use metaphor when it illuminates, not to obscure. Never use emojis. Respond in plain text with minimal markdown — use **bold** sparingly for emphasis, use bullet lists with dashes when listing items. Do not use headers.`;
+
+// ============================================================
+// 1a. CHAT PERSISTENCE
+// ============================================================
+function saveChat() {
+  if (conversation.length === 0) return;
+  fetch('/chat/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threadId: chatThreadId, messages: conversation }),
+  }).catch(err => console.warn('[AURYN] Chat save failed:', err));
+}
+
+function loadChat() {
+  return fetch(`/chat/load?threadId=${chatThreadId}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.messages && data.messages.length > 0) {
+        conversation = data.messages;
+        renderChatHistory(data.messages);
+      }
+    })
+    .catch(err => console.warn('[AURYN] Chat load failed:', err));
+}
+
+function clearChat() {
+  fetch('/chat/clear', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threadId: chatThreadId }),
+  }).then(() => {
+    conversation = [];
+    messagesEl.innerHTML = '';
+  }).catch(err => console.warn('[AURYN] Chat clear failed:', err));
+}
+
+function renderChatHistory(messages) {
+  messagesEl.innerHTML = '';
+  for (const m of messages) {
+    const el = document.createElement('div');
+    el.className = m.role === 'user' ? 'msg user' : 'msg assistant';
+    if (m.role === 'assistant') {
+      // Render markdown-ish content (bold, lists) as HTML
+      el.innerHTML = formatAssistantText(m.content);
+    } else {
+      el.textContent = m.content;
+    }
+    messagesEl.appendChild(el);
+  }
+  scrollToBottom();
+}
+
+function formatAssistantText(text) {
+  // Minimal markdown: **bold**, bullet lists, code blocks
+  let html = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Convert lines starting with - to list items
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+  return html;
+}
 
 // ============================================================
 // 1b. DREAMNODE CATALOG
 // ============================================================
-// Request catalog from InterBrain via postMessage, fall back to
-// scanning via CLI bridge, or use empty list.
-
-// Mock catalog for testing — replaced by InterBrain response when in iframe
-const MOCK_CATALOG = [
-  { id: '53a3bb7a-3df8-4f36-af99-23787a8cec25', title: 'A U R Y N', type: 'dream', repoPath: 'AURYN', dreamTalkUrl: '' },
-  { id: 'mock-interBrain', title: 'InterBrain', type: 'dream', repoPath: 'InterBrain', dreamTalkUrl: '' },
-  { id: 'mock-prism', title: 'PRISM', type: 'dream', repoPath: 'PRISM', dreamTalkUrl: '' },
-  { id: 'mock-dreamtalk', title: 'DreamTalk', type: 'dream', repoPath: 'DreamTalk', dreamTalkUrl: '' },
-  { id: 'mock-ataraxia', title: 'A T A R A X I A', type: 'dream', repoPath: 'ATARAXIA', dreamTalkUrl: '' },
-  { id: 'mock-project-liminality', title: 'Project Liminality', type: 'dream', repoPath: 'Project Liminality', dreamTalkUrl: '' },
-  { id: 'mock-software-gardening', title: 'Software Gardening', type: 'dream', repoPath: 'Software Gardening', dreamTalkUrl: '' },
-  { id: 'mock-david', title: 'David', type: 'dreamer', repoPath: 'David', dreamTalkUrl: '' },
-  { id: 'mock-kronos', title: 'Kronos', type: 'dream', repoPath: 'Kronos', dreamTalkUrl: '' },
-  { id: 'mock-songlines', title: 'Songlines', type: 'dream', repoPath: 'Songlines', dreamTalkUrl: '' },
-  { id: 'mock-tutorial-system', title: 'Tutorial System', type: 'dream', repoPath: 'Tutorial System', dreamTalkUrl: '' },
-  { id: 'mock-spring-launch', title: 'Spring Launch', type: 'dream', repoPath: 'Spring Launch', dreamTalkUrl: '' },
-];
+// Fetch real catalog from aurin.py /catalog endpoint (scans vault .udd files).
+// Falls back to InterBrain postMessage when in iframe.
 
 function requestDreamNodeCatalog() {
   if (isInIframe) {
     window.parent.postMessage({ type: 'dreamnode-catalog-request' }, '*');
   }
-  // Use mock data immediately so autocomplete works for testing
-  if (dreamNodeCatalog.length === 0) {
-    setDreamNodeCatalog(MOCK_CATALOG);
-  }
+  // Fetch real catalog from server
+  fetch('/catalog')
+    .then(r => r.json())
+    .then(data => {
+      if (data.nodes && data.nodes.length > 0) {
+        setDreamNodeCatalog(data.nodes);
+      }
+    })
+    .catch(err => console.warn('[AURYN] Catalog fetch failed:', err));
 }
 
 function setDreamNodeCatalog(nodes) {
@@ -697,6 +761,7 @@ window.addEventListener('message', (e) => {
     document.getElementById('context-zone').style.display = '';
     // Request catalog once bridge is ready
     requestDreamNodeCatalog();
+    loadChat();
     return;
   }
 
@@ -742,10 +807,11 @@ if (isInIframe) {
   document.getElementById('chat-zone').style.display = '';
   document.getElementById('context-zone').style.display = '';
   connectionStatus.style.display = 'block';
-  connectionStatus.textContent = 'Connecting to InterBrain...';
+  connectionStatus.textContent = 'Connecting to AURYN server...';
   connectionStatus.className = 'disconnected';
-  console.log('[AURYN] Standalone mode — connecting to AI bridge WebSocket');
+  console.log('[AURYN] Standalone mode — connecting to AURYN server /ws');
   requestDreamNodeCatalog();
+  loadChat();
   connectAIBridgeWs();
 }
 
@@ -794,9 +860,13 @@ const AI_BRIDGE_PORT = 27182;
 let aiBridgeWs = null;
 
 function getAIBridgeWsUrl() {
-  // When served by server.py, the InterBrain is on the same machine
-  // Use the page's hostname (works for both localhost and Tailscale IP)
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  if (standaloneMode) {
+    // Served by aurin.py — use the same origin's /ws endpoint
+    // which has the full agentic tool-calling loop
+    return `${wsProtocol}//${window.location.host}/ws`;
+  }
+  // Inside InterBrain iframe — connect to the plugin's AI bridge
   const host = window.location.hostname || 'localhost';
   return `${wsProtocol}//${host}:${AI_BRIDGE_PORT}`;
 }
@@ -810,7 +880,7 @@ function connectAIBridgeWs() {
 
     aiBridgeWs.onopen = () => {
       console.log('[AURYN] AI bridge WS connected');
-      connectionStatus.textContent = 'Connected to InterBrain';
+      connectionStatus.textContent = 'Connected to AURYN';
       connectionStatus.className = 'connected';
       // Hide after 3s if connected
       setTimeout(() => {
@@ -847,7 +917,7 @@ function connectAIBridgeWs() {
       console.log('[AURYN] AI bridge WS disconnected');
       aiBridgeWs = null;
       connectionStatus.style.display = 'block';
-      connectionStatus.textContent = 'Disconnected from InterBrain — reconnecting...';
+      connectionStatus.textContent = 'Disconnected — reconnecting...';
       connectionStatus.className = 'disconnected';
       setTimeout(connectAIBridgeWs, 3000);
     };
@@ -866,7 +936,7 @@ function connectAIBridgeWs() {
 
 function sendWsBridgeRequest(messages) {
   if (!aiBridgeWs || aiBridgeWs.readyState !== WebSocket.OPEN) {
-    finishStream('Not connected to InterBrain. Make sure Obsidian is running.');
+    finishStream('Not connected to AURYN server.');
     return;
   }
 
@@ -1262,8 +1332,20 @@ function appendChunk(chunk) {
 }
 
 function handleToolCallStart(toolName, toolInput) {
+  if (!activeMsg) return;
+
+  // Flush any pending animation state for the current text segment
+  if (activeMsg.mdParser) {
+    const remaining = activeMsg.mdParser.flush();
+    processTokensFor(activeMsg, remaining);
+  }
+  if (activeMsg.wordBuffer && activeMsg.wordBuffer.length > 0) {
+    flushWordFor(activeMsg);
+  }
+
+  // Insert tool block INSIDE the assistant bubble
   const block = document.createElement('div');
-  block.className = 'msg assistant tool-call-block';
+  block.className = 'tool-call-block';
   block.dataset.toolName = toolName;
 
   const nameEl = document.createElement('div');
@@ -1280,13 +1362,46 @@ function handleToolCallStart(toolName, toolInput) {
   inputDetails.appendChild(inputPre);
   block.appendChild(inputDetails);
 
-  messagesEl.appendChild(block);
+  activeMsg.el.appendChild(block);
+
+  // Start a fresh text segment inside the same bubble for post-tool text
+  const newTextLayer = document.createElement('div');
+  newTextLayer.className = 'text-layer';
+  activeMsg.el.appendChild(newTextLayer);
+
+  // Reset text segment state on activeMsg — same bubble, new segment
+  activeMsg.textLayer = newTextLayer;
+  activeMsg.fullText = '';
+  activeMsg.mdParser = createMarkdownParser();
+  activeMsg.xOffset = 0;
+  activeMsg.lineData = [];
+  activeMsg.animatedChars = 0;
+  activeMsg.wordBuffer = [];
+  activeMsg.pendingNewlines = 0;
+
+  if (fontLoaded) {
+    newTextLayer.style.visibility = 'hidden';
+    const overlay = document.createElement('div');
+    overlay.className = 'svg-overlay';
+    const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgEl.style.overflow = 'visible';
+    overlay.appendChild(svgEl);
+    activeMsg.el.appendChild(overlay);
+    activeMsg.svgOverlay = overlay;
+    activeMsg.svgEl = svgEl;
+    startNewLineFor(activeMsg);
+  } else {
+    activeMsg.svgOverlay = null;
+    activeMsg.svgEl = null;
+  }
+
   scrollToBottom();
 }
 
 function handleToolCallResult(toolName, result) {
-  // Find the most recent tool-call-block for this tool
-  const blocks = messagesEl.querySelectorAll('.tool-call-block[data-tool-name="' + toolName + '"]');
+  // Find the most recent tool-call-block for this tool — now inside activeMsg.el
+  const container = (activeMsg && activeMsg.el) ? activeMsg.el : messagesEl;
+  const blocks = container.querySelectorAll('.tool-call-block[data-tool-name="' + toolName + '"]');
   const block = blocks[blocks.length - 1];
   if (!block) return;
 
@@ -1364,6 +1479,7 @@ function finishStream(error) {
     activeMsg = null;
   }
 
+  saveChat();
   inputEl.focus();
 }
 
@@ -1382,24 +1498,6 @@ function sendMessage(text) {
 
   // Hide autocomplete on send
   hideAutocomplete();
-
-  // Check for /do command — route to Claude Code
-  if (text.startsWith('/do ')) {
-    const doPrompt = text.slice(4).trim();
-    if (doPrompt) {
-      // Show user message
-      const userMsg = document.createElement('div');
-      userMsg.className = 'msg user';
-      userMsg.textContent = text;
-      messagesEl.appendChild(userMsg);
-      conversation.push({ role: 'user', content: text });
-      inputEl.value = '';
-      inputEl.style.height = 'auto';
-      updateSendButton();
-      startClaudeCode(doPrompt);
-      return;
-    }
-  }
 
   const userMsg = document.createElement('div');
   userMsg.className = 'msg user';
@@ -1587,16 +1685,19 @@ function finishRecording(fullText) {
 }
 
 // ============================================================
-// 9. DRAG AND DROP AUDIO
+// 9. DRAG AND DROP FILES (audio → transcribe, others → upload)
 // ============================================================
 let dragCounter = 0;
+const AUDIO_EXTS = /\.(webm|mp3|wav|m4a|ogg|mp4|aac|flac|opus|wma|amr|caf)$/i;
+
+function isAudioFile(file) {
+  return file.type.startsWith('audio/') || file.type.startsWith('video/') || AUDIO_EXTS.test(file.name);
+}
 
 document.addEventListener('dragenter', (e) => {
   e.preventDefault();
   dragCounter++;
-  if (hasAudioFile(e)) {
-    dropOverlay.classList.add('active');
-  }
+  dropOverlay.classList.add('active');
 });
 
 document.addEventListener('dragleave', (e) => {
@@ -1617,75 +1718,121 @@ document.addEventListener('drop', async (e) => {
   dragCounter = 0;
   dropOverlay.classList.remove('active');
 
-  const files = [...e.dataTransfer.files].filter(f =>
-    f.type.startsWith('audio/') ||
-    /\.(webm|mp3|wav|m4a|ogg|mp4|aac|flac)$/i.test(f.name)
-  );
-
+  const files = [...e.dataTransfer.files];
   if (files.length === 0) return;
 
   for (const file of files) {
-    await transcribeFile(file);
+    if (isAudioFile(file)) {
+      await transcribeFile(file);
+    } else {
+      await uploadFile(file);
+    }
   }
 });
 
-function hasAudioFile(e) {
-  if (e.dataTransfer.items) {
-    for (const item of e.dataTransfer.items) {
-      if (item.kind === 'file' && (item.type.startsWith('audio/') || item.type.startsWith('video/'))) {
-        return true;
-      }
-    }
+async function uploadFile(file) {
+  const label = document.createElement('div');
+  label.className = 'transcript-label';
+  label.textContent = `uploading: ${file.name}...`;
+  messagesEl.appendChild(label);
+  scrollToBottom();
+
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const resp = await fetch('/upload', { method: 'POST', body: formData });
+    if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
+
+    const result = await resp.json();
+    const uploaded = result.files[0];
+    const sizeFmt = uploaded.size > 1024*1024
+      ? (uploaded.size / (1024*1024)).toFixed(1) + ' MB'
+      : (uploaded.size / 1024).toFixed(1) + ' KB';
+
+    label.textContent = `uploaded: ${file.name} (${sizeFmt})`;
+
+    const contextText = `[File: ${uploaded.path}]\nOriginal name: ${file.name}\nSize: ${sizeFmt}`;
+    const userMsg = document.createElement('div');
+    userMsg.className = 'msg user';
+    userMsg.textContent = contextText;
+    messagesEl.appendChild(userMsg);
+    conversation.push({ role: 'user', content: contextText });
+    saveChat();
+    scrollToBottom();
+  } catch (err) {
+    label.textContent = `upload error: ${file.name}`;
+    const errEl = document.createElement('div');
+    errEl.className = 'msg assistant';
+    errEl.textContent = err.message;
+    messagesEl.appendChild(errEl);
   }
-  return true;
 }
 
 async function transcribeFile(file) {
+  // Use the exact same /ws/transcribe pipeline as live mic recording.
+  // Protocol: start_stream → binary audio data → end_stream → receive transcript_chunk events.
+
   const label = document.createElement('div');
   label.className = 'transcript-label';
-  label.textContent = `transcribing ${file.name}...`;
+  label.textContent = `${file.name}: connecting...`;
   messagesEl.appendChild(label);
-
-  const msg = createAnimatedMessage('transcript');
-  appendChunkTo(msg, 'Processing audio...');
   scrollToBottom();
 
-  const uploadUrl = standaloneMode
-    ? '/upload/audio'
-    : 'http://localhost:3002/upload/audio';
+  const url = getTranscriptionWsUrl();
+  let transcript = '';
+  let serverPath = '';
 
   try {
-    const form = new FormData();
-    form.append('file', file, file.name);
+    const ws = new WebSocket(url);
+    const buffer = await file.arrayBuffer();
 
-    const resp = await fetch(uploadUrl, { method: 'POST', body: form });
-    const data = await resp.json();
+    await new Promise((resolve, reject) => {
+      ws.onopen = () => {
+        label.textContent = `${file.name}: transcribing...`;
+        ws.send(JSON.stringify({ type: 'start_stream', filename: file.name }));
+        ws.send(buffer);
+        ws.send(JSON.stringify({ type: 'end_stream' }));
+      };
 
-    msg.fullText = '';
-    msg.textLayer.innerHTML = '';
-    if (msg.svgEl) {
-      while (msg.svgEl.firstChild) msg.svgEl.removeChild(msg.svgEl.firstChild);
-      msg.animatedChars = 0;
-      msg.lineData = [];
-      msg.xOffset = 0;
-      msg.mdParser = createMarkdownParser();
-      startNewLineFor(msg);
-    }
+      ws.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.type === 'transcript_chunk') {
+          transcript += data.text;
+          label.textContent = `${file.name}: transcribing... (${transcript.trim().length} chars)`;
+          scrollToBottom();
+        } else if (data.type === 'stream_ended') {
+          serverPath = data.file_path || '';
+          ws.close();
+          resolve();
+        }
+      };
 
-    if (data.text) {
-      appendChunkTo(msg, data.text);
+      ws.onerror = () => reject(new Error('WebSocket connection failed'));
+      ws.onclose = () => resolve();
+    });
+
+    transcript = transcript.trim();
+    if (transcript) {
       label.textContent = `transcribed: ${file.name}`;
-      finishAnimatedMessage(msg);
-
-      setTimeout(() => { sendMessage(data.text.trim()); }, 800);
-    } else if (data.error) {
-      label.textContent = `failed: ${file.name}`;
-      appendChunkTo(msg, data.error);
-      finishAnimatedMessage(msg, data.error);
+      const filePath = serverPath || file.name;
+      const contextText = `[Voice memo: ${filePath}]\nOriginal name: ${file.name}\n\n${transcript}`;
+      const userMsg = document.createElement('div');
+      userMsg.className = 'msg user';
+      userMsg.textContent = contextText;
+      messagesEl.appendChild(userMsg);
+      conversation.push({ role: 'user', content: contextText });
+      saveChat();
+      scrollToBottom();
+    } else {
+      label.textContent = `no speech detected: ${file.name}`;
     }
   } catch (err) {
     label.textContent = `error: ${file.name}`;
-    finishAnimatedMessage(msg, err.message);
+    const errEl = document.createElement('div');
+    errEl.className = 'msg assistant';
+    errEl.textContent = err.message;
+    messagesEl.appendChild(errEl);
   }
 }
 
