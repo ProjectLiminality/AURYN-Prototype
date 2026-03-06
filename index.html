@@ -2112,6 +2112,11 @@ sendBtn.addEventListener('click', () => {
 });
 stopBtn.addEventListener('click', () => { cancelStream(); });
 
+// On tab/browser close, cancel any active stream so Claude Code gets killed immediately
+window.addEventListener('beforeunload', () => {
+  if (isStreaming) cancelStream();
+});
+
 micBtn.addEventListener('click', () => {
   if (isRecording) {
     stopRecording();

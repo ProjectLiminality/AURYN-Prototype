@@ -552,7 +552,7 @@ def build_injected_index(html: str, models: list[str] | None = None) -> str:
 # ============================================================
 
 async def ws_inference(request: web.Request) -> web.WebSocketResponse:
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(heartbeat=10.0)  # ping every 10s, kill after 30s no pong
     await ws.prepare(request)
 
     ollama_url = request.app["ollama_url"]
