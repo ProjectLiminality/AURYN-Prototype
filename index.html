@@ -121,6 +121,24 @@
   .msg.transcript {
     align-self: flex-start; width: 100%; position: relative; padding: 0;
   }
+  .msg.tool-call-block {
+    align-self: flex-start; width: 100%;
+    background: #0d1117; border-left: 3px solid #334;
+    border-radius: 6px; padding: 8px 12px; font-size: 0.85em;
+    color: #aaa; font-family: monospace;
+  }
+  .msg.tool-call-block .tool-name {
+    color: #7aadff; font-weight: bold; margin-bottom: 4px;
+  }
+  .msg.tool-call-block details { margin-top: 4px; }
+  .msg.tool-call-block summary { cursor: pointer; opacity: 0.7; }
+  .msg.tool-call-block summary:hover { opacity: 1; }
+  .msg.tool-call-block pre {
+    white-space: pre-wrap; margin: 6px 0 0;
+    max-height: 300px; overflow-y: auto;
+    font-size: 0.9em; color: #ccc;
+    background: #0a0a0a; padding: 6px; border-radius: 4px;
+  }
 
   /* The rendered markdown text layer */
   .msg.assistant .text-layer, .msg.transcript .text-layer {
@@ -287,10 +305,15 @@
   }
   #connection-status.connected { color: #4a7a4a; }
   #connection-status.disconnected { color: #7a4a4a; }
+  #top-toolbar {
+    position: fixed; top: 8px; right: 8px; z-index: 9999;
+    display: flex; align-items: center; gap: 6px;
+  }
   #reload-btn {
-    position: fixed; top: 4px; right: 8px; z-index: 100;
     background: none; border: 1px solid #333; border-radius: 4px;
-    color: #555; font-size: 10px; padding: 2px 8px; cursor: pointer;
+    color: #555; font-size: 12px; padding: 4px 10px; cursor: pointer;
+    font-family: -apple-system, sans-serif; white-space: nowrap;
+    min-height: 30px;
   }
   #reload-btn:hover { color: #aaa; border-color: #555; }
 
@@ -310,7 +333,9 @@
 </head>
 <body>
 <div id="connection-status"></div>
+<div id="top-toolbar">
 <button id="reload-btn" onclick="reloadServer()" title="Restart AURYN server">reload</button>
+</div>
 
 <!-- CONTEXT ZONE: AURYN symbol + context petals -->
 <div id="context-zone">
@@ -685,6 +710,10 @@ window.addEventListener('message', (e) => {
 
   if (d.type === 'ai-inference-stream-chunk') {
     appendChunk(d.chunk);
+  } else if (d.type === 'tool-call-start') {
+    handleToolCallStart(d.tool_name, d.tool_input);
+  } else if (d.type === 'tool-call-result') {
+    handleToolCallResult(d.tool_name, d.result);
   } else if (d.type === 'ai-inference-stream-done') {
     finishStream();
   } else if (d.type === 'ai-inference-stream-error') {
@@ -803,6 +832,10 @@ function connectAIBridgeWs() {
 
       if (data.type === 'ai-inference-stream-chunk') {
         appendChunk(data.chunk);
+      } else if (data.type === 'tool-call-start') {
+        handleToolCallStart(data.tool_name, data.tool_input);
+      } else if (data.type === 'tool-call-result') {
+        handleToolCallResult(data.tool_name, data.result);
       } else if (data.type === 'ai-inference-stream-done') {
         finishStream();
       } else if (data.type === 'ai-inference-stream-error') {
@@ -1226,6 +1259,47 @@ function appendChunkTo(msg, chunk) {
 
 function appendChunk(chunk) {
   appendChunkTo(activeMsg, chunk);
+}
+
+function handleToolCallStart(toolName, toolInput) {
+  const block = document.createElement('div');
+  block.className = 'msg assistant tool-call-block';
+  block.dataset.toolName = toolName;
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'tool-name';
+  nameEl.textContent = '[' + toolName + ']';
+  block.appendChild(nameEl);
+
+  const inputDetails = document.createElement('details');
+  const inputSummary = document.createElement('summary');
+  inputSummary.textContent = 'Input';
+  const inputPre = document.createElement('pre');
+  inputPre.textContent = JSON.stringify(toolInput, null, 2);
+  inputDetails.appendChild(inputSummary);
+  inputDetails.appendChild(inputPre);
+  block.appendChild(inputDetails);
+
+  messagesEl.appendChild(block);
+  scrollToBottom();
+}
+
+function handleToolCallResult(toolName, result) {
+  // Find the most recent tool-call-block for this tool
+  const blocks = messagesEl.querySelectorAll('.tool-call-block[data-tool-name="' + toolName + '"]');
+  const block = blocks[blocks.length - 1];
+  if (!block) return;
+
+  const resultDetails = document.createElement('details');
+  resultDetails.open = true;
+  const resultSummary = document.createElement('summary');
+  resultSummary.textContent = 'Result';
+  const resultPre = document.createElement('pre');
+  resultPre.textContent = result || '(no output)';
+  resultDetails.appendChild(resultSummary);
+  resultDetails.appendChild(resultPre);
+  block.appendChild(resultDetails);
+  scrollToBottom();
 }
 
 function finishAnimatedMessage(msg, error) {
@@ -1770,18 +1844,64 @@ function startClaudeCode(prompt) {
       const data = JSON.parse(e.data);
       const el = document.getElementById('claude-status');
 
-      if (data.type === 'claude_status') {
-        if (el) el.textContent = data.message;
+      if (data.type === 'claude_prompt') {
+        if (el) {
+          const details = document.createElement('details');
+          details.style.cssText = 'margin-top:8px;font-size:0.85em;opacity:0.7;';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Prompt sent to Claude Code';
+          summary.style.cursor = 'pointer';
+          const pre = document.createElement('pre');
+          pre.style.cssText = 'white-space:pre-wrap;margin:6px 0 0;max-height:200px;overflow-y:auto;font-size:0.9em;';
+          pre.textContent = data.prompt;
+          details.appendChild(summary);
+          details.appendChild(pre);
+          el.appendChild(details);
+          scrollToBottom();
+        }
+      } else if (data.type === 'claude_status') {
+        if (el) {
+          // Update just the status text (first text node), keep prompt details intact
+          const firstChild = el.firstChild;
+          if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
+            firstChild.textContent = data.message;
+          } else {
+            el.insertBefore(document.createTextNode(data.message), el.firstChild);
+          }
+        }
       } else if (data.type === 'claude_result') {
         if (el) {
-          let text = data.message || 'Done.';
-          if (data.cost) text += `\n\nCost: $${data.cost.toFixed(4)}`;
-          if (data.status === 'done') {
-            // Check if changes might need a reload
-            text += '\n\n(Refresh page for UI changes. Use reload button for server changes.)';
+          // Replace status text
+          const firstChild = el.firstChild;
+          const statusText = data.status === 'error' ? 'Claude Code error.' : 'Claude Code done.';
+          if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
+            firstChild.textContent = statusText;
+          } else {
+            el.insertBefore(document.createTextNode(statusText), el.firstChild);
           }
-          el.textContent = text;
+          // Show result + cost in a details block
+          const details = document.createElement('details');
+          details.open = true;
+          details.style.cssText = 'margin-top:8px;font-size:0.85em;';
+          const summary = document.createElement('summary');
+          summary.style.cursor = 'pointer';
+          let summaryText = data.status === 'error' ? 'Error' : 'Result';
+          if (data.cost) summaryText += ` ($${data.cost.toFixed(4)})`;
+          summary.textContent = summaryText;
+          const pre = document.createElement('pre');
+          pre.style.cssText = 'white-space:pre-wrap;margin:6px 0 0;max-height:400px;overflow-y:auto;font-size:0.9em;';
+          pre.textContent = data.message || '(no output)';
+          details.appendChild(summary);
+          details.appendChild(pre);
+          if (data.status === 'done') {
+            const hint = document.createElement('div');
+            hint.style.cssText = 'margin-top:6px;opacity:0.6;font-size:0.85em;';
+            hint.textContent = 'Refresh page for UI changes. Use reload button for server changes.';
+            details.appendChild(hint);
+          }
+          el.appendChild(details);
           el.removeAttribute('id');
+          scrollToBottom();
         }
         // Add to conversation so AURYN knows what happened
         conversation.push({ role: 'assistant', content: '[Claude Code] ' + (data.message || 'Done.') });

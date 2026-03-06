@@ -496,17 +496,28 @@ def build_injected_index(html: str, models: list[str] | None = None) -> str:
         1,
     )
 
-    # Inject model selector dropdown
+    # Inject model selector dropdown into the existing #top-toolbar (before reload btn)
     model_options = models or ["qwen3:32b"]
-    opts_html = "".join(f'<option value="{m}">{m}</option>' for m in model_options)
-    selector = (
-        '<div id="auryn-model-picker" style="position:fixed;top:8px;right:8px;z-index:9999;'
-        'font:12px monospace;opacity:0.7">'
-        f'<select id="auryn-model-select" style="background:#1a1a1a;color:#c4a54a;'
-        f'border:1px solid #333;border-radius:4px;padding:2px 4px;font:inherit">'
-        f'{opts_html}</select></div>'
+    # Determine which model to pre-select: prefer claude-sonnet, else first in list
+    default_sel = next(
+        (m for m in model_options if "claude-sonnet" in m),
+        model_options[0] if model_options else "",
     )
-    html = html.replace("</body>", selector + "\n</body>", 1)
+    opts_html = "".join(
+        f'<option value="{m}"{" selected" if m == default_sel else ""}>{m}</option>'
+        for m in model_options
+    )
+    select_el = (
+        f'<select id="auryn-model-select" style="background:#1a1a1a;color:#c4a54a;'
+        f'border:1px solid #333;border-radius:4px;padding:4px 6px;'
+        f'font:12px -apple-system,sans-serif;min-height:30px;cursor:pointer">'
+        f'{opts_html}</select>'
+    )
+    html = html.replace(
+        '<div id="top-toolbar">\n',
+        f'<div id="top-toolbar">\n{select_el}\n',
+        1,
+    )
 
     # Polyfill crypto.randomUUID for non-secure contexts (HTTP on mobile Safari)
     # + add global error handler to surface errors in the UI (no console on mobile)
@@ -663,6 +674,138 @@ async def _stream_ollama(
             pass
 
 
+# ============================================================
+# Tool definitions for Claude's native tool calling
+# ============================================================
+
+AURYN_TOOLS = [
+    {
+        "name": "search_dreamnodes",
+        "description": (
+            "Search the DreamNode knowledge garden using BM25 + vocabulary matching. "
+            "Returns the most relevant DreamNodes (title, path, score) for a query. "
+            "Use this whenever the user asks about a topic, project, or concept that "
+            "might exist in the vault, or when you need context before answering."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query — keywords, concepts, or a natural language question.",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (default 8, max 20).",
+                    "default": 8,
+                },
+                "include_readme": {
+                    "type": "boolean",
+                    "description": "If true, include the README content of each result (slower but richer).",
+                    "default": False,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "run_claude_code",
+        "description": (
+            "Delegate a task to Claude Code — a powerful sub-agent with full filesystem access, "
+            "bash execution, file editing, and deep codebase analysis. Use this for tasks that "
+            "require reading/writing files, running commands, or deep technical work in a DreamNode. "
+            "Claude Code runs autonomously and returns a complete result. "
+            "Only use when the task genuinely requires file system access or execution."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "The full task description for Claude Code to execute.",
+                },
+                "dreamnode_path": {
+                    "type": "string",
+                    "description": "Absolute path to the DreamNode directory to work in (optional — defaults to AURYN root).",
+                },
+            },
+            "required": ["prompt"],
+        },
+    },
+]
+
+
+def _execute_search_dreamnodes(query: str, top_k: int = 8, include_readme: bool = False) -> str:
+    """Execute search_dreamnodes tool synchronously."""
+    try:
+        index = load_index()
+        if index is None:
+            return "No search index available. Run `aurin.py index` to build it."
+
+        top_k = min(max(1, top_k), 20)
+        results = context_search(query, index, top_k=top_k)
+
+        if not results:
+            return f"No DreamNodes found for query: {query!r}"
+
+        lines = [f"Found {len(results)} DreamNode(s) for {query!r}:\n"]
+        for r in results:
+            lines.append(f"**{r['title']}** (score: {r['score']:.3f})")
+            lines.append(f"  Path: {r['path']}")
+            if r.get("vocab_hit"):
+                lines.append(f"  Vocab match: yes ({r.get('mentions', 0)} mention(s))")
+            if include_readme:
+                readme = Path(r["path"]) / "README.md"
+                if readme.exists():
+                    content = readme.read_text(encoding="utf-8")
+                    # Truncate very long READMEs
+                    if len(content) > 3000:
+                        content = content[:3000] + "\n\n[...truncated...]"
+                    lines.append(f"\n  README:\n{content}")
+            lines.append("")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Search error: {e}"
+
+
+async def _execute_run_claude_code(prompt: str, dreamnode_path: str | None = None) -> str:
+    """Execute run_claude_code tool."""
+    try:
+        cwd = dreamnode_path if dreamnode_path and Path(dreamnode_path).is_dir() else str(AURYN_DIR)
+        result = await run_claude_code(
+            prompt=prompt,
+            model="sonnet",
+            max_budget=1.00,
+            cwd=cwd,
+            allowed_tools="Bash Read Edit Write Grep Glob",
+        )
+        response = result.get("result", "")
+        is_error = result.get("is_error", False)
+        cost = result.get("total_cost_usd", 0)
+        prefix = "**Claude Code error:**\n" if is_error else f"**Claude Code result** (${cost:.4f}):\n"
+        return prefix + (response or "(no output)")
+    except Exception as e:
+        return f"Claude Code execution error: {e}"
+
+
+async def _dispatch_tool(tool_name: str, tool_input: dict) -> str:
+    """Dispatch a tool call and return the result as a string."""
+    if tool_name == "search_dreamnodes":
+        return _execute_search_dreamnodes(
+            query=tool_input.get("query", ""),
+            top_k=tool_input.get("top_k", 8),
+            include_readme=tool_input.get("include_readme", False),
+        )
+    elif tool_name == "run_claude_code":
+        return await _execute_run_claude_code(
+            prompt=tool_input.get("prompt", ""),
+            dreamnode_path=tool_input.get("dreamnode_path"),
+        )
+    else:
+        return f"Unknown tool: {tool_name}"
+
+
 async def _stream_claude(
     ws: web.WebSocketResponse,
     request_id: str,
@@ -670,7 +813,11 @@ async def _stream_claude(
     model: str,
     api_key: str,
 ) -> None:
-    """Stream inference from Claude API and relay chunks over WebSocket."""
+    """Stream inference from Claude API with native tool calling.
+
+    Implements an agentic loop: Claude can call search_dreamnodes and
+    run_claude_code autonomously, then streams its final response.
+    """
     if not api_key:
         await ws.send_json({
             "type": "ai-inference-stream-error",
@@ -687,15 +834,6 @@ async def _stream_claude(
         else:
             api_messages.append({"role": m["role"], "content": m["content"]})
 
-    payload: dict = {
-        "model": model,
-        "max_tokens": 8192,
-        "messages": api_messages,
-        "stream": True,
-    }
-    if system_msg:
-        payload["system"] = system_msg
-
     headers = {
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
@@ -705,68 +843,164 @@ async def _stream_claude(
     partial_content = ""
     prompt_tokens = 0
     completion_tokens = 0
+    max_tool_rounds = 5  # prevent infinite loops
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.anthropic.com/v1/messages",
-                json=payload,
-                headers=headers,
-            ) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    await ws.send_json({
-                        "type": "ai-inference-stream-error",
-                        "requestId": request_id,
-                        "error": f"Claude API error ({resp.status}): {error_text}",
-                    })
-                    return
-
-                # SSE stream
-                async for line in resp.content:
-                    line = line.decode("utf-8", errors="replace").strip()
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        event = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-
-                    etype = event.get("type")
-
-                    if etype == "content_block_delta":
-                        delta = event.get("delta", {})
-                        if delta.get("type") == "text_delta":
-                            token = delta.get("text", "")
-                            if token:
-                                partial_content += token
-                                await ws.send_json({
-                                    "type": "ai-inference-stream-chunk",
-                                    "requestId": request_id,
-                                    "chunk": token,
-                                })
-
-                    elif etype == "message_delta":
-                        usage = event.get("usage", {})
-                        completion_tokens = usage.get("output_tokens", 0)
-
-                    elif etype == "message_start":
-                        msg_usage = event.get("message", {}).get("usage", {})
-                        prompt_tokens = msg_usage.get("input_tokens", 0)
-
-                await ws.send_json({
-                    "type": "ai-inference-stream-done",
-                    "requestId": request_id,
-                    "provider": "anthropic",
+            for _round in range(max_tool_rounds + 1):
+                payload: dict = {
                     "model": model,
-                    "usage": {
-                        "promptTokens": prompt_tokens,
-                        "completionTokens": completion_tokens,
-                    },
-                })
+                    "max_tokens": 8192,
+                    "messages": api_messages,
+                    "tools": AURYN_TOOLS,
+                    "stream": True,
+                }
+                if system_msg:
+                    payload["system"] = system_msg
+
+                async with session.post(
+                    "https://api.anthropic.com/v1/messages",
+                    json=payload,
+                    headers=headers,
+                ) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        await ws.send_json({
+                            "type": "ai-inference-stream-error",
+                            "requestId": request_id,
+                            "error": f"Claude API error ({resp.status}): {error_text}",
+                        })
+                        return
+
+                    # Collect the full response (text + tool_use blocks)
+                    content_blocks: list[dict] = []
+                    current_block: dict | None = None
+                    stop_reason = None
+
+                    async for line in resp.content:
+                        line = line.decode("utf-8", errors="replace").strip()
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            event = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        etype = event.get("type")
+
+                        if etype == "message_start":
+                            msg_usage = event.get("message", {}).get("usage", {})
+                            prompt_tokens += msg_usage.get("input_tokens", 0)
+                            stop_reason = event.get("message", {}).get("stop_reason")
+
+                        elif etype == "content_block_start":
+                            block = event.get("content_block", {})
+                            current_block = {"type": block.get("type"), "index": event.get("index", 0)}
+                            if block.get("type") == "text":
+                                current_block["text"] = ""
+                            elif block.get("type") == "tool_use":
+                                current_block["id"] = block.get("id", "")
+                                current_block["name"] = block.get("name", "")
+                                current_block["input_json"] = ""
+
+                        elif etype == "content_block_delta":
+                            delta = event.get("delta", {})
+                            if current_block is None:
+                                continue
+                            if delta.get("type") == "text_delta":
+                                token = delta.get("text", "")
+                                if token:
+                                    current_block["text"] = current_block.get("text", "") + token
+                                    partial_content += token
+                                    await ws.send_json({
+                                        "type": "ai-inference-stream-chunk",
+                                        "requestId": request_id,
+                                        "chunk": token,
+                                    })
+                            elif delta.get("type") == "input_json_delta":
+                                current_block["input_json"] = current_block.get("input_json", "") + delta.get("partial_json", "")
+
+                        elif etype == "content_block_stop":
+                            if current_block is not None:
+                                content_blocks.append(current_block)
+                                current_block = None
+
+                        elif etype == "message_delta":
+                            usage = event.get("usage", {})
+                            completion_tokens += usage.get("output_tokens", 0)
+                            stop_reason = event.get("delta", {}).get("stop_reason") or stop_reason
+
+                # Collect tool_use blocks from this round
+                tool_use_blocks = [b for b in content_blocks if b.get("type") == "tool_use"]
+
+                if not tool_use_blocks or stop_reason != "tool_use":
+                    # No tool calls — we're done
+                    break
+
+                # Add assistant's response (with tool_use blocks) to message history
+                assistant_content = []
+                for b in content_blocks:
+                    if b.get("type") == "text" and b.get("text"):
+                        assistant_content.append({"type": "text", "text": b["text"]})
+                    elif b.get("type") == "tool_use":
+                        try:
+                            tool_input = json.loads(b.get("input_json", "{}"))
+                        except json.JSONDecodeError:
+                            tool_input = {}
+                        assistant_content.append({
+                            "type": "tool_use",
+                            "id": b["id"],
+                            "name": b["name"],
+                            "input": tool_input,
+                        })
+                api_messages.append({"role": "assistant", "content": assistant_content})
+
+                # Execute each tool and collect results
+                tool_results = []
+                for b in tool_use_blocks:
+                    try:
+                        tool_input = json.loads(b.get("input_json", "{}"))
+                    except json.JSONDecodeError:
+                        tool_input = {}
+
+                    # Notify frontend that a tool is running
+                    await ws.send_json({
+                        "type": "tool-call-start",
+                        "requestId": request_id,
+                        "tool_name": b["name"],
+                        "tool_input": tool_input,
+                    })
+
+                    tool_result = await _dispatch_tool(b["name"], tool_input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": b["id"],
+                        "content": tool_result,
+                    })
+
+                    await ws.send_json({
+                        "type": "tool-call-result",
+                        "requestId": request_id,
+                        "tool_name": b["name"],
+                        "result": tool_result,
+                    })
+
+                # Add tool results to message history for next round
+                api_messages.append({"role": "user", "content": tool_results})
+
+        await ws.send_json({
+            "type": "ai-inference-stream-done",
+            "requestId": request_id,
+            "provider": "anthropic",
+            "model": model,
+            "usage": {
+                "promptTokens": prompt_tokens,
+                "completionTokens": completion_tokens,
+            },
+        })
 
     except asyncio.CancelledError:
         pass
@@ -2072,6 +2306,7 @@ async def ws_claude(request: web.Request) -> web.WebSocketResponse:
                 + "\n\n---\n\nTask: " + prompt
             )
 
+        await ws.send_json({"type": "claude_prompt", "prompt": full_prompt})
         await ws.send_json({"type": "claude_status", "message": f"Spawning Claude Code..."})
 
         try:
@@ -2292,7 +2527,7 @@ def main() -> None:
     serve_parser = sub.add_parser("serve", help="Start the AURYN server")
     serve_parser.add_argument("--port", type=int, default=8080)
     serve_parser.add_argument("--host", default="0.0.0.0")
-    serve_parser.add_argument("--model", default="qwen3:32b")
+    serve_parser.add_argument("--model", default="claude-sonnet-4-6")
     serve_parser.add_argument("--ollama-url", default="http://localhost:11434")
     serve_parser.add_argument("--no-ssl", action="store_true", help="Disable HTTPS")
     serve_parser.add_argument("--transcription-model", default="base",
