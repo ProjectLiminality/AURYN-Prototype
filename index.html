@@ -443,6 +443,7 @@ let font = null;
 let fontLoaded = false;
 let aiBridgeReady = false;
 let standaloneMode = false;
+const BASE_PATH = ''; // Patched by server when served under a prefix (e.g. '/AURYN')
 
 // Transcription state
 let isRecording = false;
@@ -482,7 +483,7 @@ Keep responses concise and grounded. Use metaphor when it illuminates, not to ob
 // ============================================================
 function saveChat() {
   if (conversation.length === 0) return;
-  fetch('/chat/save', {
+  fetch(BASE_PATH + '/chat/save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ threadId: chatThreadId, messages: conversation }),
@@ -490,7 +491,7 @@ function saveChat() {
 }
 
 function loadChat() {
-  return fetch(`/chat/load?threadId=${chatThreadId}`)
+  return fetch(`${BASE_PATH}/chat/load?threadId=${chatThreadId}`)
     .then(r => r.json())
     .then(data => {
       if (data.messages && data.messages.length > 0) {
@@ -502,7 +503,7 @@ function loadChat() {
 }
 
 function clearChat() {
-  fetch('/chat/clear', {
+  fetch(BASE_PATH + '/chat/clear', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ threadId: chatThreadId }),
@@ -551,7 +552,7 @@ function requestDreamNodeCatalog() {
     window.parent.postMessage({ type: 'dreamnode-catalog-request' }, '*');
   }
   // Fetch real catalog from server
-  fetch('/catalog')
+  fetch(BASE_PATH + '/catalog')
     .then(r => r.json())
     .then(data => {
       if (data.nodes && data.nodes.length > 0) {
@@ -911,7 +912,7 @@ function getAIBridgeWsUrl() {
   if (standaloneMode) {
     // Served by aurin.py — use the same origin's /ws endpoint
     // which has the full agentic tool-calling loop
-    return `${wsProtocol}//${window.location.host}/ws`;
+    return `${wsProtocol}//${window.location.host}${BASE_PATH}/ws`;
   }
   // Inside InterBrain iframe — connect to the plugin's AI bridge
   const host = window.location.hostname || 'localhost';
@@ -1725,7 +1726,7 @@ async function sendMessage(text) {
   let systemContent = SYSTEM_PROMPT;
   if (contextNodes.length > 0) {
     const readmePromises = contextNodes.map(n =>
-      fetch('/readme?path=' + encodeURIComponent(n.path || n.absPath || n.repoPath || ''))
+      fetch(BASE_PATH + '/readme?path=' + encodeURIComponent(n.path || n.absPath || n.repoPath || ''))
         .then(r => r.json())
         .catch(() => null)
     );
@@ -1775,7 +1776,7 @@ function renderVocabDebug(data) {
 function getTranscriptionWsUrl() {
   if (standaloneMode) {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${wsProtocol}//${window.location.host}/ws/transcribe`;
+    return `${wsProtocol}//${window.location.host}${BASE_PATH}/ws/transcribe`;
   }
   return `ws://localhost:3002/ws/transcribe`;
 }
@@ -1970,7 +1971,7 @@ async function uploadFile(file) {
     const formData = new FormData();
     formData.append('file', file);
 
-    const resp = await fetch('/upload', { method: 'POST', body: formData });
+    const resp = await fetch(BASE_PATH + '/upload', { method: 'POST', body: formData });
     if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
 
     const result = await resp.json();
