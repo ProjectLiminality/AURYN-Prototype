@@ -589,7 +589,7 @@ async def ws_inference(request: web.Request) -> web.WebSocketResponse:
                 active_tasks[request_id] = task
                 task.add_done_callback(lambda t, rid=request_id: active_tasks.pop(rid, None))
 
-            elif data.get("type") == "ai-inference-stream-cancel":
+            elif data.get("type") in ("ai-inference-stream-cancel", "tool-call-cancel"):
                 rid = data.get("requestId")
                 task = active_tasks.pop(rid, None)
                 if task:
@@ -601,8 +601,6 @@ async def ws_inference(request: web.Request) -> web.WebSocketResponse:
     for task in active_tasks.values():
         task.cancel()
     active_tasks.clear()
-    # Safety net: kill any Claude Code subprocesses that survived task cancellation
-    _kill_all_cc_procs()
     return ws
 
 
@@ -796,46 +794,123 @@ def _load_chat_history_text(thread_id: str = "current") -> str:
         return ""
 
 
-async def _execute_run_claude_code(prompt: str, dreamnode_path: str | None = None) -> str:
-    """Execute run_claude_code tool. Session continuity is automatic via --continue + cwd."""
+def _load_chat_messages(thread_id: str = "current") -> list[dict]:
+    """Read chat messages list from disk."""
+    chat_file = CHATS_DIR / f"{thread_id}.json"
+    if not chat_file.exists():
+        return []
+    try:
+        data = json.loads(chat_file.read_text())
+        return data.get("messages", [])
+    except Exception:
+        return []
+
+
+# Track last-injected message index for delta injection per AURYN chat session
+_last_cc_inject_index: int = 0
+
+
+def _format_messages_as_text(messages: list[dict]) -> str:
+    """Format a list of chat messages as labeled text."""
+    lines = []
+    for m in messages:
+        role = "David" if m["role"] == "user" else "AURYN"
+        lines.append(f"{role}: {m['content']}")
+    return "\n\n".join(lines)
+
+
+async def _execute_run_claude_code(
+    prompt: str,
+    dreamnode_path: str | None = None,
+    ws: "web.WebSocketResponse | None" = None,
+    request_id: str = "",
+) -> str:
+    """Execute run_claude_code tool with streaming observability.
+
+    If ws is provided, streams Claude Code activity events to the frontend.
+    Uses delta injection: first call gets full chat history, subsequent calls
+    get only messages since the last Claude Code invocation.
+    """
+    global _last_cc_inject_index
     try:
         is_auryn_local = not dreamnode_path or not Path(dreamnode_path).is_dir()
         cwd = str(AURYN_DIR) if is_auryn_local else dreamnode_path
 
-        # In AURYN-local mode, prepend full chat history so Claude Code has full context
+        # In AURYN-local mode, inject chat history (full on first call, delta after)
         if is_auryn_local:
-            history = _load_chat_history_text()
-            if history:
-                prompt = (
-                    "=== AURYN CHAT HISTORY ===\n"
-                    + history
-                    + "\n=== END CHAT HISTORY ===\n\n"
-                    "Your directive:\n"
-                    + prompt
-                )
+            all_messages = _load_chat_messages()
+            if all_messages:
+                if _last_cc_inject_index == 0:
+                    # First invocation: full history
+                    history = _format_messages_as_text(all_messages)
+                    label = "AURYN CHAT HISTORY"
+                else:
+                    # Subsequent: only new messages since last call
+                    delta = all_messages[_last_cc_inject_index:]
+                    if delta:
+                        history = _format_messages_as_text(delta)
+                        label = "AURYN CHAT UPDATE (since last Claude Code call)"
+                    else:
+                        history = ""
+                        label = ""
 
-        result = await run_claude_code(
+                _last_cc_inject_index = len(all_messages)
+
+                if history:
+                    prompt = (
+                        f"=== {label} ===\n"
+                        + history
+                        + f"\n=== END {label} ===\n\n"
+                        "Your directive:\n"
+                        + prompt
+                    )
+
+        final_result = ""
+        is_error = False
+        cost = 0.0
+        subtype = ""
+
+        async for event in run_claude_code_streaming(
             prompt=prompt,
             model="sonnet",
             max_budget=5.00,
             cwd=cwd,
             allowed_tools="Bash Read Edit Write Grep Glob",
-        )
-        response = result.get("result", "")
-        is_error = result.get("is_error", False)
-        subtype = result.get("subtype", "")
-        cost = result.get("total_cost_usd", 0)
+        ):
+            etype = event.get("type", "")
+
+            # Stream activity events to frontend
+            if ws and request_id:
+                try:
+                    await ws.send_json({
+                        "type": "cc-activity",
+                        "requestId": request_id,
+                        "event": event,
+                    })
+                except (ConnectionResetError, ConnectionError):
+                    pass
+
+            if etype == "result":
+                final_result = event.get("result", "")
+                is_error = event.get("is_error", False)
+                subtype = event.get("subtype", "")
+                cost = event.get("total_cost_usd", 0)
 
         if subtype == "error_max_budget_usd":
             return f"**Claude Code** hit session budget limit (${cost:.2f} accumulated). The continued session has used its budget — clear chat or start a fresh task."
 
         prefix = "**Claude Code error:**\n" if is_error else f"**Claude Code result** (${cost:.4f}):\n"
-        return prefix + (response or "(no output)")
+        return prefix + (final_result or "(no output)")
     except Exception as e:
         return f"Claude Code execution error: {e}"
 
 
-async def _dispatch_tool(tool_name: str, tool_input: dict) -> str:
+async def _dispatch_tool(
+    tool_name: str,
+    tool_input: dict,
+    ws: "web.WebSocketResponse | None" = None,
+    request_id: str = "",
+) -> str:
     """Dispatch a tool call and return the result as a string."""
     if tool_name == "search_dreamnodes":
         return _execute_search_dreamnodes(
@@ -847,6 +922,8 @@ async def _dispatch_tool(tool_name: str, tool_input: dict) -> str:
         return await _execute_run_claude_code(
             prompt=tool_input.get("prompt", ""),
             dreamnode_path=tool_input.get("dreamnode_path"),
+            ws=ws,
+            request_id=request_id,
         )
     else:
         return f"Unknown tool: {tool_name}"
@@ -1020,7 +1097,7 @@ async def _stream_claude(
                         "tool_input": tool_input,
                     })
 
-                    tool_result = await _dispatch_tool(b["name"], tool_input)
+                    tool_result = await _dispatch_tool(b["name"], tool_input, ws=ws, request_id=request_id)
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": b["id"],
@@ -1049,7 +1126,7 @@ async def _stream_claude(
         })
 
     except asyncio.CancelledError:
-        # Session cancelled (stop button or disconnect) — kill any active Claude Code subprocess
+        # Session cancelled (stop button) — kill Claude Code subprocesses for this task
         _kill_all_cc_procs()
     except Exception as e:
         try:
@@ -1775,6 +1852,7 @@ async def handle_chat_load(request: web.Request) -> web.Response:
 
 async def handle_chat_clear(request: web.Request) -> web.Response:
     """Clear the current thread (archives it with timestamp, starts fresh)."""
+    global _last_cc_inject_index
     thread_id = (await request.json()).get("threadId", "current")
     chat_file = CHATS_DIR / f"{thread_id}.json"
 
@@ -1783,6 +1861,9 @@ async def handle_chat_clear(request: web.Request) -> web.Response:
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         archive = CHATS_DIR / f"{thread_id}_{ts}.json"
         chat_file.rename(archive)
+
+    # Reset delta injection counter for new chat session
+    _last_cc_inject_index = 0
 
     return web.json_response({"ok": True, "archived": True})
 
@@ -2302,15 +2383,36 @@ async def run_claude_code(
     cwd: str | None = None,
     allowed_tools: str | None = None,
 ) -> dict:
-    """Run Claude Code as a sub-agent in headless mode.
+    """Run Claude Code in headless mode, collect final result only.
+
+    For streaming, use run_claude_code_streaming() instead.
+    """
+    result_holder: dict = {}
+    async for event in run_claude_code_streaming(
+        prompt=prompt, model=model, max_budget=max_budget,
+        cwd=cwd, allowed_tools=allowed_tools,
+    ):
+        if event.get("type") == "result":
+            result_holder = event
+    return result_holder or {"type": "result", "is_error": True, "result": "(no output)"}
+
+
+async def run_claude_code_streaming(
+    prompt: str,
+    model: str = "sonnet",
+    max_budget: float = 5.00,
+    cwd: str | None = None,
+    allowed_tools: str | None = None,
+):
+    """Run Claude Code as a sub-agent in headless streaming mode.
 
     Always uses --continue to resume the most recent session in the cwd.
     The working directory IS the session key — each DreamNode gets its own thread.
-    Returns parsed JSON output with result, cost, session_id, etc.
+    Yields parsed JSON events as they arrive from stream-json output.
     """
     cmd = [
         "claude", "-p",
-        "--output-format", "json",
+        "--output-format", "stream-json",
         "--dangerously-skip-permissions",
         "--model", model,
         "--max-budget-usd", str(max_budget),
@@ -2338,7 +2440,38 @@ async def run_claude_code(
     _active_cc_procs[task_id] = proc
 
     try:
-        stdout, stderr = await proc.communicate(input=prompt.encode("utf-8"))
+        # Send prompt via stdin and close it
+        proc.stdin.write(prompt.encode("utf-8"))
+        await proc.stdin.drain()
+        proc.stdin.close()
+
+        # Read stdout line by line — each line is a JSON event
+        buffer = b""
+        while True:
+            chunk = await proc.stdout.read(4096)
+            if not chunk:
+                break
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line.decode("utf-8", errors="replace"))
+                    yield event
+                except json.JSONDecodeError:
+                    continue
+
+        # Process any remaining buffer
+        if buffer.strip():
+            try:
+                event = json.loads(buffer.decode("utf-8", errors="replace"))
+                yield event
+            except json.JSONDecodeError:
+                pass
+
+        await proc.wait()
     except asyncio.CancelledError:
         # Session was cancelled — kill the subprocess
         try:
@@ -2352,22 +2485,6 @@ async def run_claude_code(
         raise
     finally:
         _active_cc_procs.pop(task_id, None)
-
-    output = stdout.decode("utf-8", errors="replace")
-    try:
-        parsed = json.loads(output)
-        # Extract the result from the JSON array
-        if isinstance(parsed, list):
-            for item in parsed:
-                if item.get("type") == "result":
-                    return item
-            return {"type": "result", "raw": parsed}
-        return parsed
-    except json.JSONDecodeError:
-        return {
-            "type": "result", "is_error": True,
-            "result": output or stderr.decode("utf-8", errors="replace"),
-        }
 
 
 # ============================================================

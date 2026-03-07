@@ -128,8 +128,44 @@
     color: #aaa; font-family: monospace;
     margin: 8px 0;
   }
+  .tool-call-block .tool-header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+  }
   .tool-call-block .tool-name {
-    color: #7aadff; font-weight: bold; margin-bottom: 4px;
+    color: #7aadff; font-weight: bold;
+  }
+  .tool-call-block .tool-stop-btn {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: #333; border: 1px solid #555; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; color: #c44; font-size: 10px; line-height: 1;
+    transition: background 0.2s;
+  }
+  .tool-call-block .tool-stop-btn:hover { background: #500; border-color: #c44; }
+  .tool-call-block .tool-stop-btn.hidden { display: none; }
+  .tool-call-block .cc-activity {
+    margin-top: 6px; padding: 4px 8px;
+    background: #0a0e14; border-radius: 4px;
+    font-size: 0.85em; color: #8b949e;
+    max-height: 200px; overflow-y: auto;
+  }
+  .tool-call-block .cc-activity .cc-event {
+    padding: 2px 0; border-bottom: 1px solid #1a1f2b;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tool-call-block .cc-activity .cc-event:last-child { border-bottom: none; }
+  .tool-call-block .cc-activity .cc-event-tool { color: #d2a8ff; }
+  .tool-call-block .cc-activity .cc-event-text { color: #7ee787; }
+  .tool-call-block .cc-activity .cc-event-result { color: #58a6ff; }
+  @keyframes cc-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+  .tool-call-block .cc-spinner {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; background: #7aadff;
+    animation: cc-pulse 1.2s ease-in-out infinite;
+    margin-right: 6px;
   }
   .tool-call-block details { margin-top: 4px; }
   .tool-call-block summary { cursor: pointer; opacity: 0.7; }
@@ -788,6 +824,8 @@ window.addEventListener('message', (e) => {
     handleToolCallStart(d.tool_name, d.tool_input);
   } else if (d.type === 'tool-call-result') {
     handleToolCallResult(d.tool_name, d.result);
+  } else if (d.type === 'cc-activity') {
+    handleCCActivity(d.event);
   } else if (d.type === 'ai-inference-stream-done') {
     finishStream();
   } else if (d.type === 'ai-inference-stream-error') {
@@ -915,6 +953,8 @@ function connectAIBridgeWs() {
         handleToolCallStart(data.tool_name, data.tool_input);
       } else if (data.type === 'tool-call-result') {
         handleToolCallResult(data.tool_name, data.result);
+      } else if (data.type === 'cc-activity') {
+        handleCCActivity(data.event);
       } else if (data.type === 'ai-inference-stream-done') {
         finishStream();
       } else if (data.type === 'ai-inference-stream-error') {
@@ -1357,10 +1397,39 @@ function handleToolCallStart(toolName, toolInput) {
   block.className = 'tool-call-block';
   block.dataset.toolName = toolName;
 
+  // Header with tool name + stop button
+  const header = document.createElement('div');
+  header.className = 'tool-header';
+
   const nameEl = document.createElement('div');
   nameEl.className = 'tool-name';
   nameEl.textContent = '[' + toolName + ']';
-  block.appendChild(nameEl);
+  header.appendChild(nameEl);
+
+  if (toolName === 'run_claude_code') {
+    const spinner = document.createElement('span');
+    spinner.className = 'cc-spinner';
+    header.appendChild(spinner);
+
+    const stopBtn = document.createElement('button');
+    stopBtn.className = 'tool-stop-btn';
+    stopBtn.innerHTML = '&#9632;'; // square stop icon
+    stopBtn.title = 'Stop Claude Code';
+    stopBtn.addEventListener('click', () => {
+      if (currentRequestId && aiBridgeWs && aiBridgeWs.readyState === WebSocket.OPEN) {
+        aiBridgeWs.send(JSON.stringify({
+          type: 'tool-call-cancel',
+          requestId: currentRequestId
+        }));
+      }
+      stopBtn.classList.add('hidden');
+      const sp = block.querySelector('.cc-spinner');
+      if (sp) sp.remove();
+    });
+    header.appendChild(stopBtn);
+  }
+
+  block.appendChild(header);
 
   const inputDetails = document.createElement('details');
   const inputSummary = document.createElement('summary');
@@ -1370,6 +1439,13 @@ function handleToolCallStart(toolName, toolInput) {
   inputDetails.appendChild(inputSummary);
   inputDetails.appendChild(inputPre);
   block.appendChild(inputDetails);
+
+  // Activity feed for Claude Code streaming events
+  if (toolName === 'run_claude_code') {
+    const activityDiv = document.createElement('div');
+    activityDiv.className = 'cc-activity';
+    block.appendChild(activityDiv);
+  }
 
   activeMsg.el.appendChild(block);
 
@@ -1414,6 +1490,12 @@ function handleToolCallResult(toolName, result) {
   const block = blocks[blocks.length - 1];
   if (!block) return;
 
+  // Clean up spinner and stop button
+  const spinner = block.querySelector('.cc-spinner');
+  if (spinner) spinner.remove();
+  const stopBtn = block.querySelector('.tool-stop-btn');
+  if (stopBtn) stopBtn.classList.add('hidden');
+
   const resultDetails = document.createElement('details');
   resultDetails.open = true;
   const resultSummary = document.createElement('summary');
@@ -1423,6 +1505,77 @@ function handleToolCallResult(toolName, result) {
   resultDetails.appendChild(resultSummary);
   resultDetails.appendChild(resultPre);
   block.appendChild(resultDetails);
+  scrollToBottom();
+}
+
+function handleCCActivity(event) {
+  // Route Claude Code streaming events to the activity feed
+  if (!activeMsg || !activeMsg.el) return;
+  const blocks = activeMsg.el.querySelectorAll('.tool-call-block[data-tool-name="run_claude_code"]');
+  const block = blocks[blocks.length - 1];
+  if (!block) return;
+  const activityDiv = block.querySelector('.cc-activity');
+  if (!activityDiv) return;
+
+  const etype = event.type || '';
+  let text = '';
+  let className = 'cc-event';
+
+  if (etype === 'assistant' && event.message) {
+    // Claude Code is thinking/writing — show a summary
+    const content = event.message.content || [];
+    for (const c of content) {
+      if (c.type === 'tool_use') {
+        text = 'Using: ' + c.name;
+        className += ' cc-event-tool';
+      } else if (c.type === 'text' && c.text) {
+        // Show last 80 chars of text
+        const t = c.text.length > 80 ? '...' + c.text.slice(-80) : c.text;
+        text = t.replace(/\n/g, ' ');
+        className += ' cc-event-text';
+      }
+    }
+  } else if (etype === 'tool' && event.tool) {
+    // Tool result from Claude Code's internal tools
+    const toolName = event.tool.name || '';
+    const toolInput = event.tool.input || {};
+    if (toolName === 'Read') {
+      text = 'Read: ' + (toolInput.file_path || '').split('/').slice(-2).join('/');
+    } else if (toolName === 'Edit') {
+      text = 'Edit: ' + (toolInput.file_path || '').split('/').slice(-2).join('/');
+    } else if (toolName === 'Write') {
+      text = 'Write: ' + (toolInput.file_path || '').split('/').slice(-2).join('/');
+    } else if (toolName === 'Bash') {
+      const cmd = toolInput.command || '';
+      text = '$ ' + (cmd.length > 60 ? cmd.slice(0, 60) + '...' : cmd);
+    } else if (toolName === 'Grep') {
+      text = 'Grep: ' + (toolInput.pattern || '');
+    } else if (toolName === 'Glob') {
+      text = 'Glob: ' + (toolInput.pattern || '');
+    } else {
+      text = toolName;
+    }
+    className += ' cc-event-tool';
+  } else if (etype === 'result') {
+    const cost = event.total_cost_usd || 0;
+    text = 'Done ($' + cost.toFixed(4) + ')';
+    className += ' cc-event-result';
+  }
+
+  if (!text) return;
+
+  const el = document.createElement('div');
+  el.className = className;
+  el.textContent = text;
+  activityDiv.appendChild(el);
+
+  // Keep only last 20 events visible
+  while (activityDiv.children.length > 20) {
+    activityDiv.removeChild(activityDiv.firstChild);
+  }
+
+  // Auto-scroll the activity feed
+  activityDiv.scrollTop = activityDiv.scrollHeight;
   scrollToBottom();
 }
 
@@ -2134,10 +2287,7 @@ attachInput.addEventListener('change', async () => {
   }
 });
 
-// On tab/browser close, cancel any active stream so Claude Code gets killed immediately
-window.addEventListener('beforeunload', () => {
-  if (isStreaming) cancelStream();
-});
+// Note: no beforeunload handler — Claude Code sessions survive disconnections
 
 micBtn.addEventListener('click', () => {
   if (isRecording) {
