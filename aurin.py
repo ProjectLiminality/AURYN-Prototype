@@ -524,6 +524,22 @@ def build_injected_index(html: str, models: list[str] | None = None) -> str:
         1,
     )
 
+    # Inject system prompt from SYSTEM_PROMPT.md
+    sys_prompt_path = AURYN_DIR / "SYSTEM_PROMPT.md"
+    if sys_prompt_path.exists():
+        sys_prompt = sys_prompt_path.read_text(encoding="utf-8").strip()
+        # Escape for JS template literal: backticks, dollar signs, backslashes
+        escaped = sys_prompt.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+        # Replace the hardcoded SYSTEM_PROMPT const
+        import re
+        html = re.sub(
+            r"const SYSTEM_PROMPT = `.*?`;",
+            f"const SYSTEM_PROMPT = `{escaped}`;",
+            html,
+            count=1,
+            flags=re.DOTALL,
+        )
+
     # Polyfill crypto.randomUUID for non-secure contexts (HTTP on mobile Safari)
     # + add global error handler to surface errors in the UI (no console on mobile)
     polyfill = (
@@ -688,7 +704,8 @@ AURYN_TOOLS = [
         "name": "search_dreamnodes",
         "description": (
             "Search the DreamNode knowledge garden using BM25 + vocabulary matching. "
-            "Returns the most relevant DreamNodes (title, path, score) for a query. "
+            "Only use this when the user's question is about DreamNodes NOT already loaded as context petals. "
+            "If relevant DreamNodes are already in context, use that information directly. "
             "Use this whenever the user asks about a topic, project, or concept that "
             "might exist in the vault, or when you need context before answering."
         ),
@@ -711,6 +728,38 @@ AURYN_TOOLS = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "edit_readme",
+        "description": (
+            "Edit a DreamNode's README.md directly. Use this to route insights from conversation "
+            "into the appropriate DreamNode README. The DreamNode must be loaded as a context petal. "
+            "Provide the old text to replace and the new text. The edit is applied and auto-committed. "
+            "For appending to a section, use old_text as the last line of the section and new_text "
+            "as that line plus the new content. For rewriting a section, include the full section as old_text."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dreamnode_path": {
+                    "type": "string",
+                    "description": "Absolute path to the DreamNode directory containing README.md.",
+                },
+                "old_text": {
+                    "type": "string",
+                    "description": "The exact text in the README to replace. Must match exactly (whitespace-sensitive).",
+                },
+                "new_text": {
+                    "type": "string",
+                    "description": "The replacement text. Must differ from old_text.",
+                },
+                "commit_message": {
+                    "type": "string",
+                    "description": "A concise commit message describing the insight being captured.",
+                },
+            },
+            "required": ["dreamnode_path", "old_text", "new_text", "commit_message"],
         },
     },
     {
@@ -739,6 +788,68 @@ AURYN_TOOLS = [
         },
     },
 ]
+
+
+def _execute_edit_readme(
+    dreamnode_path: str, old_text: str, new_text: str, commit_message: str
+) -> str:
+    """Edit a DreamNode README.md and auto-commit the change."""
+    try:
+        dn_path = Path(dreamnode_path).resolve()
+        readme_path = dn_path / "README.md"
+
+        # Validate the path is inside the vault
+        if not str(dn_path).startswith(str(VAULT_DIR)):
+            return f"Error: path {dn_path} is outside the vault."
+        if not readme_path.exists():
+            return f"Error: no README.md found at {readme_path}"
+
+        content = readme_path.read_text(encoding="utf-8")
+
+        if old_text not in content:
+            return (
+                "Error: old_text not found in README.md. "
+                "Make sure it matches exactly (whitespace-sensitive). "
+                f"README length: {len(content)} chars."
+            )
+
+        if old_text == new_text:
+            return "Error: old_text and new_text are identical. No change needed."
+
+        # Count occurrences to avoid ambiguous edits
+        count = content.count(old_text)
+        if count > 1:
+            return (
+                f"Error: old_text appears {count} times in README.md. "
+                "Provide more surrounding context to make the match unique."
+            )
+
+        # Apply the edit
+        new_content = content.replace(old_text, new_text, 1)
+        readme_path.write_text(new_content, encoding="utf-8")
+
+        # Auto-commit
+        import subprocess
+
+        subprocess.run(
+            ["git", "add", "README.md"],
+            cwd=str(dn_path),
+            capture_output=True,
+        )
+        result = subprocess.run(
+            ["git", "commit", "-m", commit_message],
+            cwd=str(dn_path),
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            return f"Edit applied but commit failed: {result.stderr.strip()}"
+
+        return f"README.md updated and committed: {commit_message}"
+
+    except Exception as e:
+        return f"Error editing README: {e}"
 
 
 def _execute_search_dreamnodes(query: str, top_k: int = 8, include_readme: bool = False) -> str:
@@ -917,6 +1028,13 @@ async def _dispatch_tool(
             query=tool_input.get("query", ""),
             top_k=tool_input.get("top_k", 8),
             include_readme=tool_input.get("include_readme", False),
+        )
+    elif tool_name == "edit_readme":
+        return _execute_edit_readme(
+            dreamnode_path=tool_input.get("dreamnode_path", ""),
+            old_text=tool_input.get("old_text", ""),
+            new_text=tool_input.get("new_text", ""),
+            commit_message=tool_input.get("commit_message", "Update README"),
         )
     elif tool_name == "run_claude_code":
         return await _execute_run_claude_code(
@@ -1816,6 +1934,18 @@ async def handle_catalog(request: web.Request) -> web.Response:
     return web.json_response({"nodes": catalog, "count": len(catalog)})
 
 
+async def handle_readme(request: web.Request) -> web.Response:
+    """Return README.md content for a DreamNode by absolute path."""
+    dn_path = request.query.get("path", "")
+    if not dn_path:
+        return web.json_response({"error": "path required"}, status=400)
+    readme_path = Path(dn_path) / "README.md"
+    if not readme_path.exists():
+        return web.json_response({"readme": "", "title": Path(dn_path).name})
+    content = readme_path.read_text(encoding="utf-8", errors="replace")
+    return web.json_response({"readme": content, "title": Path(dn_path).name})
+
+
 # ============================================================
 # Chat History Persistence
 # ============================================================
@@ -2629,6 +2759,7 @@ def create_app(
     app.router.add_post("/upload", handle_upload)
     app.router.add_get("/context-files", handle_context_files)
     app.router.add_get("/catalog", handle_catalog)
+    app.router.add_get("/readme", handle_readme)
     app.router.add_post("/chat/save", handle_chat_save)
     app.router.add_get("/chat/load", handle_chat_load)
     app.router.add_post("/chat/clear", handle_chat_clear)

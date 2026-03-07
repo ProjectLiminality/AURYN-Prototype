@@ -151,7 +151,7 @@
   }
   .tool-call-block .cc-activity .cc-event {
     padding: 2px 0; border-bottom: 1px solid #1a1f2b;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    white-space: pre-wrap; word-break: break-all;
   }
   .tool-call-block .cc-activity .cc-event:last-child { border-bottom: none; }
   .tool-call-block .cc-activity .cc-event-tool { color: #d2a8ff; }
@@ -1447,9 +1447,16 @@ function handleToolCallStart(toolName, toolInput) {
 
   // Activity feed for Claude Code streaming events
   if (toolName === 'run_claude_code') {
+    const activityDetails = document.createElement('details');
+    activityDetails.open = true;
+    const activitySummary = document.createElement('summary');
+    activitySummary.textContent = 'Claude Code Activity';
+    activitySummary.style.cssText = 'cursor:pointer;font-size:11px;color:#7ee787;padding:4px 0';
+    activityDetails.appendChild(activitySummary);
     const activityDiv = document.createElement('div');
     activityDiv.className = 'cc-activity';
-    block.appendChild(activityDiv);
+    activityDetails.appendChild(activityDiv);
+    block.appendChild(activityDetails);
   }
 
   activeMsg.el.appendChild(block);
@@ -1520,7 +1527,6 @@ function handleToolCallResult(toolName, result) {
   if (stopBtn) stopBtn.classList.add('hidden');
 
   const resultDetails = document.createElement('details');
-  resultDetails.open = true;
   const resultSummary = document.createElement('summary');
   resultSummary.textContent = 'Result';
   const resultPre = document.createElement('pre');
@@ -1563,18 +1569,17 @@ function handleCCActivity(event) {
     const toolName = event.tool.name || '';
     const toolInput = event.tool.input || {};
     if (toolName === 'Read') {
-      text = 'Read: ' + (toolInput.file_path || '').split('/').slice(-2).join('/');
+      text = 'Read: ' + (toolInput.file_path || '');
     } else if (toolName === 'Edit') {
-      text = 'Edit: ' + (toolInput.file_path || '').split('/').slice(-2).join('/');
+      text = 'Edit: ' + (toolInput.file_path || '');
     } else if (toolName === 'Write') {
-      text = 'Write: ' + (toolInput.file_path || '').split('/').slice(-2).join('/');
+      text = 'Write: ' + (toolInput.file_path || '');
     } else if (toolName === 'Bash') {
-      const cmd = toolInput.command || '';
-      text = '$ ' + (cmd.length > 60 ? cmd.slice(0, 60) + '...' : cmd);
+      text = '$ ' + (toolInput.command || '');
     } else if (toolName === 'Grep') {
-      text = 'Grep: ' + (toolInput.pattern || '');
+      text = 'Grep: ' + (toolInput.pattern || '') + (toolInput.path ? ' in ' + toolInput.path : '');
     } else if (toolName === 'Glob') {
-      text = 'Glob: ' + (toolInput.pattern || '');
+      text = 'Glob: ' + (toolInput.pattern || '') + (toolInput.path ? ' in ' + toolInput.path : '');
     } else {
       text = toolName;
     }
@@ -1698,7 +1703,7 @@ function scrollToBottom() {
 // ============================================================
 // 7. CHAT LOGIC
 // ============================================================
-function sendMessage(text) {
+async function sendMessage(text) {
   if (!text) text = inputEl.value.trim();
   if (!text || isStreaming) return;
 
@@ -1716,8 +1721,26 @@ function sendMessage(text) {
   inputEl.style.height = 'auto';
   updateSendButton();
 
+  // Silently inject context node READMEs into system prompt (not in UI or chat history)
+  let systemContent = SYSTEM_PROMPT;
+  if (contextNodes.length > 0) {
+    const readmePromises = contextNodes.map(n =>
+      fetch('/readme?path=' + encodeURIComponent(n.path || n.absPath || n.repoPath || ''))
+        .then(r => r.json())
+        .catch(() => null)
+    );
+    const readmes = await Promise.all(readmePromises);
+    const contextBlock = readmes
+      .filter(r => r && r.readme)
+      .map(r => `--- ${r.title} README ---\n${r.readme}`)
+      .join('\n\n');
+    if (contextBlock) {
+      systemContent += '\n\n## Loaded DreamNode Context\n\nThe following DreamNode READMEs are loaded as context petals. Use these to answer questions and to route insights via edit_readme.\n\n' + contextBlock;
+    }
+  }
+
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemContent },
     ...conversation
   ];
 
