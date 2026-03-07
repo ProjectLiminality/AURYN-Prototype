@@ -1139,6 +1139,10 @@ function createMarkdownParser() {
 // ============================================================
 // 6. WRITE ANIMATION ENGINE
 // ============================================================
+// Set to true to re-enable the 3B1B character-by-character SVG animation.
+// When false, text streams directly into the text layer with no animation.
+const WRITE_ANIMATION_ENABLED = false;
+
 const STROKE_DURATION = 0.5;
 const FILL_DELAY = 0.1;
 const CASCADE_DELAY = 0.0075;
@@ -1165,6 +1169,7 @@ function createAnimatedMessage(cssClass) {
     el: div,
     textLayer: textLayer,
     fullText: '',
+    accumulatedContent: [],  // [{type:'text',text:...}, {type:'tool',name:...,input:...,output:...}]
     mdParser: createMarkdownParser(),
     svgOverlay: null,
     svgEl: null,
@@ -1177,7 +1182,7 @@ function createAnimatedMessage(cssClass) {
     fillColor: cssClass === 'transcript' ? '#b0b0b0' : '#fff',
   };
 
-  if (fontLoaded) {
+  if (WRITE_ANIMATION_ENABLED && fontLoaded) {
     textLayer.style.visibility = 'hidden';
 
     const overlay = document.createElement('div');
@@ -1449,6 +1454,13 @@ function handleToolCallStart(toolName, toolInput) {
 
   activeMsg.el.appendChild(block);
 
+  // Save pre-tool text segment before resetting
+  if (activeMsg.fullText) {
+    activeMsg.accumulatedContent.push({ type: 'text', text: activeMsg.fullText });
+  }
+  // Track this tool call in accumulated content (output added in handleToolCallResult)
+  activeMsg.accumulatedContent.push({ type: 'tool', name: toolName, input: toolInput, output: '' });
+
   // Start a fresh text segment inside the same bubble for post-tool text
   const newTextLayer = document.createElement('div');
   newTextLayer.className = 'text-layer';
@@ -1464,7 +1476,7 @@ function handleToolCallStart(toolName, toolInput) {
   activeMsg.wordBuffer = [];
   activeMsg.pendingNewlines = 0;
 
-  if (fontLoaded) {
+  if (WRITE_ANIMATION_ENABLED && fontLoaded) {
     newTextLayer.style.visibility = 'hidden';
     const overlay = document.createElement('div');
     overlay.className = 'svg-overlay';
@@ -1489,6 +1501,17 @@ function handleToolCallResult(toolName, result) {
   const blocks = container.querySelectorAll('.tool-call-block[data-tool-name="' + toolName + '"]');
   const block = blocks[blocks.length - 1];
   if (!block) return;
+
+  // Save tool output to accumulated content
+  if (activeMsg && activeMsg.accumulatedContent) {
+    for (let i = activeMsg.accumulatedContent.length - 1; i >= 0; i--) {
+      const item = activeMsg.accumulatedContent[i];
+      if (item.type === 'tool' && item.name === toolName && !item.output) {
+        item.output = result || '(no output)';
+        break;
+      }
+    }
+  }
 
   // Clean up spinner and stop button
   const spinner = block.querySelector('.cc-spinner');
@@ -1634,8 +1657,29 @@ function finishStream(error) {
   if (activeMsg) {
     finishAnimatedMessage(activeMsg, error);
 
+    // Build the full assistant message content including tool calls
+    const acc = activeMsg.accumulatedContent || [];
+    // Add final text segment if any
     if (activeMsg.fullText) {
-      conversation.push({ role: 'assistant', content: activeMsg.fullText });
+      acc.push({ type: 'text', text: activeMsg.fullText });
+    }
+
+    if (acc.length > 0) {
+      // Serialize: text segments as-is, tool calls as labeled blocks
+      const parts = [];
+      for (const item of acc) {
+        if (item.type === 'text' && item.text) {
+          parts.push(item.text);
+        } else if (item.type === 'tool') {
+          parts.push(
+            `\n[Tool: ${item.name}]\nInput: ${JSON.stringify(item.input)}\nOutput: ${item.output || '(no output)'}\n`
+          );
+        }
+      }
+      const fullContent = parts.join('\n');
+      if (fullContent.trim()) {
+        conversation.push({ role: 'assistant', content: fullContent });
+      }
     }
 
     activeMsg = null;
