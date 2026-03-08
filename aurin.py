@@ -1389,13 +1389,14 @@ async def _ollama_gatekeeper(
     or None on failure.
     """
     context_lines = "\n".join(f"  - {line}" for line in recent_context[-3:]) if recent_context else "  (none)"
-    vocab_str = ", ".join(vocab_list[:30]) if vocab_list else "(none)"
+    # Give gatekeeper up to 200 vocab terms (fits comfortably in context)
+    vocab_str = ", ".join(vocab_list[:200]) if vocab_list else "(none)"
 
-    prompt = f"""You are a transcript refinement assistant. You receive two transcriptions of the same audio:
+    prompt = f"""You are a transcript refinement assistant for a knowledge gardening system. You receive two transcriptions of the same audio:
 - Moonshine (fast, primary): {moonshine_text}
 - Whisper (vocabulary-primed): {whisper_text}
 
-Active vocabulary (DreamNode titles): {vocab_str}
+Known vocabulary (DreamNode titles — these are project/concept names the speaker uses): {vocab_str}
 
 Recent confirmed sentences:
 {context_lines}
@@ -1403,7 +1404,8 @@ Recent confirmed sentences:
 Your job (respond in JSON only, no explanation):
 1. Produce the best transcript by using Moonshine as base, applying vocabulary corrections from Whisper where phonetically plausible
 2. Fix punctuation and capitalization
-3. List any vocabulary terms that are confirmed present (phonetically match what was said)
+3. Detect vocabulary terms that are present — check BOTH transcriptions for matches. A word that SOUNDS like a vocabulary term probably IS that term (e.g. "dream notes" → "DreamNodes", "attraxia" → "ATARAXIA", "interbrain" → "InterBrain"). Catch false negatives that both transcribers missed.
+4. Filter false positives — common English words that happen to match a title but aren't being referenced in context
 
 Respond ONLY with JSON:
 {{"text": "refined transcript", "vocab_hits": ["term1", "term2"]}}"""
@@ -1416,7 +1418,7 @@ Respond ONLY with JSON:
                     "model": _OLLAMA_GATEKEEPER_MODEL,
                     "prompt": prompt,
                     "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 150},
+                    "options": {"temperature": 0.1, "num_predict": 256},
                 },
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
@@ -1803,16 +1805,19 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
         Returns the (possibly corrected) text."""
         # 1. Check for DreamNode name matches (Tier 1 vocab) → pin them
         hits = _check_vocab_hits(new_text)
+        core_set = {t.lower() for t in _CORE_VOCAB}
         new_pins = False
         newly_pinned_titles = []
         for info in hits:
             title = info["title"]
-            if title not in pinned_vocab:
+            # Don't duplicate core vocab in pinned list
+            if title not in pinned_vocab and title.lower() not in core_set:
                 pinned_vocab.append(title)
                 newly_pinned_titles.append(title)
                 new_pins = True
                 print(f"[Whisper] PINNED: {title} (uuid={info['uuid']}, path={info['path']})")
-                await _notify_dreamnode_hit(info)
+            # Always notify UI of DreamNode detection (even for core vocab)
+            await _notify_dreamnode_hit(info)
 
         # Fix capitalization in *this* chunk for newly pinned titles
         # (the chunk was transcribed before these terms were in the prompt)
@@ -1973,8 +1978,22 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                         ]
 
                         if moon_combined:
-                            # Build vocab list for gatekeeper
-                            all_vocab = list(_CORE_VOCAB) + list(pinned_vocab) + list(ephemeral_vocab)
+                            # Build FULL vocab list for gatekeeper — no cutoff!
+                            # The LLM can handle hundreds of terms unlike Whisper's limited window.
+                            # Ordered: core + pinned + ephemeral + all remaining titles
+                            seen_vocab = set()
+                            all_vocab = []
+                            for t in list(_CORE_VOCAB) + list(pinned_vocab) + list(ephemeral_vocab):
+                                if t.lower() not in seen_vocab:
+                                    seen_vocab.add(t.lower())
+                                    all_vocab.append(t)
+                            # Add ALL DreamNode titles from the index
+                            if context_index and "nodes" in context_index:
+                                for node in context_index["nodes"]:
+                                    title = node.get("title", "")
+                                    if title and title.lower() not in seen_vocab and len(title) >= 3:
+                                        seen_vocab.add(title.lower())
+                                        all_vocab.append(title)
                             recent_ctx = list(sliding_window[-3:])
 
                             gatekeeper_result = await _ollama_gatekeeper(
@@ -1997,17 +2016,17 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                                     _write_transcript_chunk(f"[refined] {refined}", start_time)
                                     print(f"[Gatekeeper] Correction: {refined[:80]}...")
 
-                                # Process any vocab hits from gatekeeper
+                                # Process any vocab hits from gatekeeper (false negative recovery)
+                                core_lower = {t.lower() for t in _CORE_VOCAB}
                                 for term in gatekeeper_result.get("vocab_hits", []):
-                                    if term in [info["title"] for info in _vocab_lookup.values()]:
-                                        if term not in pinned_vocab:
-                                            pinned_vocab.append(term)
-                                            print(f"[Gatekeeper] PINNED via LLM: {term}")
-                                            # Find and notify
-                                            for info in _vocab_lookup.values():
-                                                if info["title"] == term:
-                                                    await _notify_dreamnode_hit(info)
-                                                    break
+                                    # Look up by title (case-insensitive)
+                                    info = _vocab_lookup.get(term.lower())
+                                    if info:
+                                        # Pin if not already in core or pinned
+                                        if term not in pinned_vocab and info["title"].lower() not in core_lower:
+                                            pinned_vocab.append(info["title"])
+                                            print(f"[Gatekeeper] PINNED via LLM: {info['title']}")
+                                        await _notify_dreamnode_hit(info)
                                 _rebuild_prompt()
                             else:
                                 print(f"[Gatekeeper] No refinement needed or gatekeeper unavailable")
