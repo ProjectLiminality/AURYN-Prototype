@@ -13,7 +13,7 @@
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #000; color: #e0e0e0;
+    background: transparent; color: #e0e0e0;
     font-family: 'TeX Gyre Termes', Georgia, serif;
     width: 100vw; height: 100vh;
     display: flex; flex-direction: column;
@@ -26,6 +26,7 @@
     display: flex; align-items: center; justify-content: center;
     position: relative; overflow: hidden;
     flex-shrink: 0;
+    background: rgba(0, 0, 0, 0.35);
   }
 
   #auryn-symbol {
@@ -98,7 +99,10 @@
   #chat-zone {
     flex: 1; display: flex; flex-direction: column;
     min-height: 0; /* allow flex shrink */
-    border-top: 1px solid #111;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
   }
 
   #messages {
@@ -444,6 +448,9 @@ let fontLoaded = false;
 let aiBridgeReady = false;
 let standaloneMode = false;
 const BASE_PATH = ''; // Patched by server when served under a prefix (e.g. '/AURYN')
+
+// Fix AURYN symbol src so it resolves correctly in both standalone and iframe (reverse proxy) contexts
+document.querySelector('#auryn-symbol img').src = BASE_PATH + '/AURYN.jpg';
 
 // Transcription state
 let isRecording = false;
