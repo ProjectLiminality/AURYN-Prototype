@@ -47,6 +47,15 @@ CONTEXT_DIR = INDEX_DIR / "context"  # Ephemeral file uploads (auto-cleaned afte
 CONTEXT_MAX_AGE_DAYS = 7
 CHATS_DIR = AURYN_DIR / "chats"
 
+# Pipeline debug log — written to file since stdout is piped by server.py
+import logging
+_pipeline_log = logging.getLogger("auryn.pipeline")
+_pipeline_log.setLevel(logging.DEBUG)
+_plh = logging.FileHandler("/tmp/auryn-pipeline.log")
+_plh.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
+_pipeline_log.addHandler(_plh)
+plog = _pipeline_log.info
+
 
 # ============================================================
 # Context Provider — Tier 1 (Vocabulary) + Tier 2 (BM25)
@@ -1362,15 +1371,15 @@ def _get_moonshine():
         return _moonshine_transcriber
     try:
         from moonshine_voice.transcriber import Transcriber
-        from moonshine_voice.utils import get_model_path
-        model_path = get_model_path("base")
-        _moonshine_transcriber = Transcriber(model_path)
+        from moonshine_voice.download import get_model_for_language
+        model_path, model_arch = get_model_for_language("en")
+        _moonshine_transcriber = Transcriber(model_path, model_arch)
         _moonshine_available = True
-        print(f"[Moonshine] Initialized (model: base, path: {model_path})")
+        plog(f"[Moonshine] Initialized (path: {model_path}, arch: {model_arch})")
         return _moonshine_transcriber
     except Exception as e:
         _moonshine_available = False
-        print(f"[Moonshine] Not available, falling back to Whisper-only: {e}")
+        plog(f"[Moonshine] Not available, falling back to Whisper-only: {e}")
         return None
 
 
@@ -1425,7 +1434,7 @@ Respond ONLY with JSON:
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 if resp.status != 200:
-                    print(f"[Gatekeeper] Ollama HTTP {resp.status}")
+                    plog(f"[Gatekeeper] Ollama HTTP {resp.status}")
                     return None
                 body = await resp.json()
                 raw = body.get("response", "").strip()
@@ -1433,7 +1442,7 @@ Respond ONLY with JSON:
         # Extract JSON from response (may have markdown fences)
         json_match = re.search(r'\{[^{}]*\}', raw, re.DOTALL)
         if not json_match:
-            print(f"[Gatekeeper] No JSON in response: {raw[:200]}")
+            plog(f"[Gatekeeper] No JSON in response: {raw[:200]}")
             return None
 
         result = json.loads(json_match.group())
@@ -1444,10 +1453,10 @@ Respond ONLY with JSON:
         return result
 
     except asyncio.TimeoutError:
-        print(f"[Gatekeeper] Ollama timeout (15s)")
+        plog(f"[Gatekeeper] Ollama timeout (15s)")
         return None
     except Exception as e:
-        print(f"[Gatekeeper] Error: {e}")
+        plog(f"[Gatekeeper] Error: {e}")
         return None
 
 
@@ -1760,7 +1769,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 
         if new_ephemeral != ephemeral_vocab:
             ephemeral_vocab = new_ephemeral
-            print(f"[Whisper] Ephemeral vocab updated: {ephemeral_vocab[:5]}")
+            plog(f"[Whisper] Ephemeral vocab updated: {ephemeral_vocab[:5]}")
 
     def _rebuild_prompt():
         """Rebuild the vocab prompt from current pinned + ephemeral state."""
@@ -1817,7 +1826,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 pinned_vocab.append(title)
                 newly_pinned_titles.append(title)
                 new_pins = True
-                print(f"[Whisper] PINNED: {title} (uuid={info['uuid']}, path={info['path']})")
+                plog(f"[Whisper] PINNED: {title} (uuid={info['uuid']}, path={info['path']})")
             # Always notify UI of DreamNode detection (even for core vocab)
             await _notify_dreamnode_hit(info)
 
@@ -1853,11 +1862,11 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
             return ""
         try:
             from moonshine_voice.utils import load_wav_file
-            audio_data = load_wav_file(wav_path)
-            result = moonshine.transcribe_without_streaming(audio_data, sample_rate=16000)
+            audio_data, sample_rate = load_wav_file(wav_path)
+            result = moonshine.transcribe_without_streaming(audio_data, sample_rate=sample_rate)
             return " ".join(line.text.strip() for line in result.lines if line.text.strip())
         except Exception as e:
-            print(f"[Moonshine] Transcription error: {e}")
+            plog(f"[Moonshine] Transcription error: {e}")
             return ""
 
     async def periodic_moonshine():
@@ -1904,12 +1913,12 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                     })
                     transcript_parts.append(new_text)
                     _write_transcript_chunk(new_text, start_time)
-                    print(f"[Moonshine] Chunk {chunk_idx}: {new_text[:80]}...")
+                    plog(f"[Moonshine] Chunk {chunk_idx}: {new_text[:80]}...")
 
                 moonshine_last_sec = total_sec
 
             except Exception as e:
-                print(f"[Moonshine] Error: {e}")
+                plog(f"[Moonshine] Error: {e}")
             finally:
                 try:
                     os.unlink(wav_path)
@@ -2021,7 +2030,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                                     # Update the transcript parts — replace Moonshine entries
                                     # with the refined version
                                     _write_transcript_chunk(f"[refined] {refined}", start_time)
-                                    print(f"[Gatekeeper] Correction: {refined[:80]}...")
+                                    plog(f"[Gatekeeper] Correction: {refined[:80]}...")
 
                                 # Process any vocab hits from gatekeeper (false negative recovery)
                                 core_lower = {t.lower() for t in _CORE_VOCAB}
@@ -2032,11 +2041,11 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                                         # Pin if not already in core or pinned
                                         if term not in pinned_vocab and info["title"].lower() not in core_lower:
                                             pinned_vocab.append(info["title"])
-                                            print(f"[Gatekeeper] PINNED via LLM: {info['title']}")
+                                            plog(f"[Gatekeeper] PINNED via LLM: {info['title']}")
                                         await _notify_dreamnode_hit(info)
                                 _rebuild_prompt()
                             else:
-                                print(f"[Gatekeeper] No refinement needed or gatekeeper unavailable")
+                                plog(f"[Gatekeeper] No refinement needed or gatekeeper unavailable")
                         else:
                             # No Moonshine chunks to compare — shouldn't happen
                             pass
@@ -2053,7 +2062,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 last_processed_bytes = len(cumulative_webm)
 
             except Exception as e:
-                print(f"[Whisper] Transcription error: {e}")
+                plog(f"[Whisper] Transcription error: {e}")
             finally:
                 try:
                     os.unlink(wav_path)
@@ -2102,7 +2111,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                     moonshine_task = asyncio.create_task(periodic_moonshine())
                 process_task = asyncio.create_task(periodic_whisper_and_gatekeeper())
                 pipeline_mode = "three-stage (Moonshine→Whisper→Gatekeeper)" if moonshine else "single-stage (Whisper)"
-                print(f"[Pipeline] Started: {pipeline_mode}")
+                plog(f"[Pipeline] Started: {pipeline_mode}")
                 await ws.send_json({"type": "session_started", "session_id": session_id, "pipeline": pipeline_mode})
 
             elif data.get("type") == "end_stream":
