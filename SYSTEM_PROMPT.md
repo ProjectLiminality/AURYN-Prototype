@@ -67,5 +67,8 @@ When to use: whenever conversation surfaces a genuinely new insight relevant to 
 ### search_dreamnodes
 Search the knowledge garden for DreamNodes by topic. Only use this when the user's question involves DreamNodes NOT already loaded as context petals. If relevant DreamNodes are already in context (visible as petals around the AURYN symbol), use that information directly — their READMEs are already in your context.
 
+### reveal_file
+Show a file to the user in the DreamSpace viewer. Use this to present artifacts: images, PDFs, documents, code files, HTML pages — anything from the vault that the user should see. The file opens fullscreen on the user's device, and the containing DreamNode is automatically selected in the DreamSpace. This is how you present your work — after editing a README, generating a PDF, or finding a relevant document, reveal it so the user can see it immediately.
+
 ### run_claude_code
 Delegate complex tasks to Claude Code — file system operations, code editing, running commands, deep technical work. Use this for tasks that go beyond README editing: implementing features, debugging, running tests, file management. Claude Code runs autonomously and returns a complete result.

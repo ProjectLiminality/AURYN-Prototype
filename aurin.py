@@ -787,7 +787,81 @@ AURYN_TOOLS = [
             "required": ["prompt"],
         },
     },
+    {
+        "name": "reveal_file",
+        "description": (
+            "Show a file to the user in the DreamSpace viewer. Use this to present "
+            "the results of your work — images, PDFs, text files, HTML pages, or any "
+            "file from the vault. The file opens fullscreen in the DreamSpace UI, and "
+            "the containing DreamNode is selected. This is how AURYN presents artifacts "
+            "to the user on their device."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute path to the file to reveal (must be inside the vault).",
+                },
+            },
+            "required": ["file_path"],
+        },
+    },
 ]
+
+
+def _execute_reveal_file(file_path: str) -> str:
+    """Validate a file path and return metadata for the frontend to open it."""
+    try:
+        fp = Path(file_path).resolve()
+        if not str(fp).startswith(str(VAULT_DIR)):
+            return json.dumps({"error": f"Path {fp} is outside the vault."})
+        if not fp.exists():
+            return json.dumps({"error": f"File not found: {fp}"})
+        if fp.is_dir():
+            return json.dumps({"error": f"Path is a directory, not a file: {fp}"})
+
+        # Find which DreamNode contains this file
+        rel = fp.relative_to(VAULT_DIR)
+        dreamnode_folder = rel.parts[0] if rel.parts else ""
+        dreamnode_id = ""
+        dreamnode_title = ""
+        dn_path = VAULT_DIR / dreamnode_folder
+        udd_path = dn_path / ".udd"
+        if udd_path.exists():
+            try:
+                udd = json.loads(udd_path.read_text())
+                dreamnode_id = udd.get("uuid", "")
+                dreamnode_title = udd.get("title", dreamnode_folder)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Build the URL path for serving this file
+        rel_path = str(rel)
+        suffix = fp.suffix.lower()
+        mime_map = {
+            ".pdf": "application/pdf",
+            ".html": "text/html", ".htm": "text/html",
+            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+            ".mp4": "video/mp4", ".webm": "video/webm",
+            ".txt": "text/plain", ".md": "text/markdown",
+            ".json": "application/json", ".csv": "text/csv",
+            ".py": "text/plain", ".js": "text/plain", ".ts": "text/plain",
+        }
+        content_type = mime_map.get(suffix, "application/octet-stream")
+
+        return json.dumps({
+            "action": "reveal_file",
+            "filePath": str(fp),
+            "relPath": rel_path,
+            "contentType": content_type,
+            "dreamnodeId": dreamnode_id,
+            "dreamnodeTitle": dreamnode_title,
+            "dreamnodeFolder": dreamnode_folder,
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 def _execute_edit_readme(
@@ -1036,6 +1110,10 @@ async def _dispatch_tool(
             new_text=tool_input.get("new_text", ""),
             commit_message=tool_input.get("commit_message", "Update README"),
         )
+    elif tool_name == "reveal_file":
+        return _execute_reveal_file(
+            file_path=tool_input.get("file_path", ""),
+        )
     elif tool_name == "run_claude_code":
         return await _execute_run_claude_code(
             prompt=tool_input.get("prompt", ""),
@@ -1208,12 +1286,18 @@ async def _stream_claude(
                         tool_input = {}
 
                     # Notify frontend that a tool is running
-                    await ws.send_json({
+                    start_msg = {
                         "type": "tool-call-start",
                         "requestId": request_id,
                         "tool_name": b["name"],
                         "tool_input": tool_input,
-                    })
+                    }
+                    # Include cwd for run_claude_code so frontend can offer "open in terminal"
+                    if b["name"] == "run_claude_code":
+                        dn_path = tool_input.get("dreamnode_path")
+                        is_local = not dn_path or not Path(dn_path).is_dir()
+                        start_msg["cwd"] = str(AURYN_DIR) if is_local else dn_path
+                    await ws.send_json(start_msg)
 
                     tool_result = await _dispatch_tool(b["name"], tool_input, ws=ws, request_id=request_id)
                     tool_results.append({
@@ -1932,6 +2016,40 @@ async def handle_catalog(request: web.Request) -> web.Response:
         for n in nodes
     ]
     return web.json_response({"nodes": catalog, "count": len(catalog)})
+
+
+async def handle_spawn_terminal(request: web.Request) -> web.Response:
+    """Open a Claude Code --continue session in a new Terminal window on macOS."""
+    data = await request.json()
+    cwd = data.get("cwd", str(AURYN_DIR))
+    # Security: cwd must be inside the vault
+    resolved = str(Path(cwd).resolve())
+    if not resolved.startswith(str(VAULT_DIR)):
+        return web.json_response({"error": "cwd outside vault"}, status=403)
+    if not Path(resolved).is_dir():
+        return web.json_response({"error": "cwd not found"}, status=404)
+
+    # Open Terminal.app with claude --continue in the right directory
+    script = f'''tell application "Terminal"
+    activate
+    do script "cd {resolved} && claude --continue"
+end tell'''
+    subprocess.Popen(["osascript", "-e", script])
+    return web.json_response({"ok": True, "cwd": resolved})
+
+
+async def handle_api_file(request: web.Request) -> web.Response:
+    """Serve any file from the vault by relative path."""
+    rel_path = request.query.get("path", "")
+    if not rel_path:
+        return web.json_response({"error": "path required"}, status=400)
+    file_path = (VAULT_DIR / rel_path).resolve()
+    # Security: must be inside vault
+    if not str(file_path).startswith(str(VAULT_DIR)):
+        return web.json_response({"error": "path outside vault"}, status=403)
+    if not file_path.exists() or file_path.is_dir():
+        return web.json_response({"error": "file not found"}, status=404)
+    return web.FileResponse(file_path)
 
 
 async def handle_readme(request: web.Request) -> web.Response:
@@ -2760,6 +2878,8 @@ def create_app(
     app.router.add_get("/context-files", handle_context_files)
     app.router.add_get("/catalog", handle_catalog)
     app.router.add_get("/readme", handle_readme)
+    app.router.add_get("/api/file", handle_api_file)
+    app.router.add_post("/api/spawn-terminal", handle_spawn_terminal)
     app.router.add_post("/chat/save", handle_chat_save)
     app.router.add_get("/chat/load", handle_chat_load)
     app.router.add_post("/chat/clear", handle_chat_clear)

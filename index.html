@@ -822,7 +822,7 @@ window.addEventListener('message', (e) => {
   if (d.type === 'ai-inference-stream-chunk') {
     appendChunk(d.chunk);
   } else if (d.type === 'tool-call-start') {
-    handleToolCallStart(d.tool_name, d.tool_input);
+    handleToolCallStart(d.tool_name, d.tool_input, d.cwd);
   } else if (d.type === 'tool-call-result') {
     handleToolCallResult(d.tool_name, d.result);
   } else if (d.type === 'cc-activity') {
@@ -834,8 +834,10 @@ window.addEventListener('message', (e) => {
   }
 });
 
-// Check if we're inside an iframe (InterBrain) or standalone
-const isInIframe = window.parent !== window;
+// Check if we're inside an iframe (InterBrain desktop) or standalone
+// When served via reverse proxy (BASE_PATH set), always treat as standalone
+// even if inside an iframe (e.g. InterBrain Mobile overlay)
+const isInIframe = window.parent !== window && !BASE_PATH;
 
 if (isInIframe) {
   fallbackEl.style.display = 'block';
@@ -951,7 +953,7 @@ function connectAIBridgeWs() {
       if (data.type === 'ai-inference-stream-chunk') {
         appendChunk(data.chunk);
       } else if (data.type === 'tool-call-start') {
-        handleToolCallStart(data.tool_name, data.tool_input);
+        handleToolCallStart(data.tool_name, data.tool_input, data.cwd);
       } else if (data.type === 'tool-call-result') {
         handleToolCallResult(data.tool_name, data.result);
       } else if (data.type === 'cc-activity') {
@@ -1386,7 +1388,7 @@ function appendChunk(chunk) {
   appendChunkTo(activeMsg, chunk);
 }
 
-function handleToolCallStart(toolName, toolInput) {
+function handleToolCallStart(toolName, toolInput, cwd) {
   if (!activeMsg) return;
 
   // Flush any pending animation state for the current text segment
@@ -1433,6 +1435,23 @@ function handleToolCallStart(toolName, toolInput) {
       if (sp) sp.remove();
     });
     header.appendChild(stopBtn);
+
+    // "Open in Terminal" button — spawns claude --continue in the same cwd
+    if (cwd) {
+      const openBtn = document.createElement('button');
+      openBtn.className = 'tool-stop-btn'; // reuse styling
+      openBtn.innerHTML = '&#8599;'; // arrow NE
+      openBtn.title = 'Open session in Terminal';
+      openBtn.style.cssText = 'font-size:14px;';
+      openBtn.addEventListener('click', () => {
+        fetch(BASE_PATH + '/api/spawn-terminal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cwd }),
+        });
+      });
+      header.appendChild(openBtn);
+    }
   }
 
   block.appendChild(header);
@@ -1527,6 +1546,29 @@ function handleToolCallResult(toolName, result) {
   const stopBtn = block.querySelector('.tool-stop-btn');
   if (stopBtn) stopBtn.classList.add('hidden');
 
+  // Handle reveal_file action — send message to parent app
+  if (toolName === 'reveal_file' && result) {
+    try {
+      const parsed = JSON.parse(result);
+      if (parsed.action === 'reveal_file') {
+        const fileUrl = BASE_PATH + '/api/file?path=' + encodeURIComponent(parsed.relPath);
+        const msg = {
+          type: 'auryn-reveal-file',
+          fileUrl: fileUrl,
+          filePath: parsed.filePath,
+          relPath: parsed.relPath,
+          contentType: parsed.contentType,
+          dreamnodeId: parsed.dreamnodeId,
+          dreamnodeTitle: parsed.dreamnodeTitle,
+          dreamnodeFolder: parsed.dreamnodeFolder,
+        };
+        // Send to parent (iframe mode) or broadcast (standalone in iframe)
+        window.parent.postMessage(msg, '*');
+        console.log('[AURYN] reveal_file →', msg);
+      }
+    } catch (e) { /* not JSON or parse error — show as normal result */ }
+  }
+
   const resultDetails = document.createElement('details');
   const resultSummary = document.createElement('summary');
   resultSummary.textContent = 'Result';
@@ -1556,11 +1598,21 @@ function handleCCActivity(event) {
     const content = event.message.content || [];
     for (const c of content) {
       if (c.type === 'tool_use') {
-        text = 'Using: ' + c.name;
+        const inp = c.input || {};
+        let detail = '';
+        if (c.name === 'Read') detail = inp.file_path || '';
+        else if (c.name === 'Edit' || c.name === 'Write') detail = inp.file_path || '';
+        else if (c.name === 'Bash') {
+          const cmd = inp.command || '';
+          detail = cmd.length > 120 ? cmd.slice(0, 120) + '...' : cmd;
+        }
+        else if (c.name === 'Grep') detail = (inp.pattern || '') + (inp.path ? ' in ' + inp.path : '');
+        else if (c.name === 'Glob') detail = (inp.pattern || '') + (inp.path ? ' in ' + inp.path : '');
+        text = c.name + (detail ? ': ' + detail : '');
         className += ' cc-event-tool';
       } else if (c.type === 'text' && c.text) {
-        // Show last 80 chars of text
-        const t = c.text.length > 80 ? '...' + c.text.slice(-80) : c.text;
+        // Show last 120 chars of text
+        const t = c.text.length > 120 ? '...' + c.text.slice(-120) : c.text;
         text = t.replace(/\n/g, ' ');
         className += ' cc-event-text';
       }
@@ -1828,6 +1880,11 @@ function connectTranscriptionWs() {
             if (node) addToContext(node);
           }
         }
+        // Resolve stopRecording promise — transcription is complete
+        if (stopRecordingResolve) {
+          stopRecordingResolve();
+          stopRecordingResolve = null;
+        }
       } else if (data.type === 'vocab_update') {
         renderVocabDebug(data);
       } else if (data.type === 'session_started') {
@@ -1898,13 +1955,33 @@ async function startRecording() {
   }
 }
 
+let stopRecordingResolve = null;
+
 function stopRecording() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+  return new Promise((resolve) => {
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+      isRecording = false;
+      micBtn.classList.remove('recording');
+      micBtn.title = 'Record voice';
+      resolve();
+      return;
+    }
+    // Store resolve — will be called when stream_ended arrives
+    stopRecordingResolve = resolve;
+    // Safety timeout in case server never responds
+    const timeout = setTimeout(() => {
+      stopRecordingResolve = null;
+      resolve();
+    }, 10000);
+    // Wrap resolve to also clear timeout
+    const origResolve = stopRecordingResolve;
+    stopRecordingResolve = () => { clearTimeout(timeout); origResolve(); };
+
     mediaRecorder.stop();
-  }
-  isRecording = false;
-  micBtn.classList.remove('recording');
-  micBtn.title = 'Record voice';
+    isRecording = false;
+    micBtn.classList.remove('recording');
+    micBtn.title = 'Record voice';
+  });
 }
 
 function finishRecording(fullText) {
@@ -2332,7 +2409,8 @@ function reloadServer() {
 // ============================================================
 // 10. EVENT HANDLERS
 // ============================================================
-sendBtn.addEventListener('click', () => {
+sendBtn.addEventListener('click', async () => {
+  if (isRecording) await stopRecording();
   const hasText = inputEl.value.trim().length > 0;
   if (hasText) {
     sendMessage();
@@ -2394,12 +2472,15 @@ inputEl.addEventListener('keydown', (e) => {
 
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    const hasText = inputEl.value.trim().length > 0;
-    if (hasText) {
-      sendMessage();
-    } else if (contextNodes.length > 0) {
-      startGardening();
-    }
+    (async () => {
+      if (isRecording) await stopRecording();
+      const hasText = inputEl.value.trim().length > 0;
+      if (hasText) {
+        sendMessage();
+      } else if (contextNodes.length > 0) {
+        startGardening();
+      }
+    })();
   }
 });
 
