@@ -1875,16 +1875,29 @@ function connectTranscriptionWs() {
     transcriptionWs.onmessage = (e) => {
       const data = JSON.parse(e.data);
 
+      // Track Moonshine chunk positions for retroactive correction
+      if (!window._moonChunks) window._moonChunks = [];
+
       if (data.type === 'transcript_chunk') {
         // Insert at cursor position in the textarea
         const start = inputEl.selectionStart;
         const end = inputEl.selectionEnd;
         const val = inputEl.value;
-        inputEl.value = val.substring(0, start) + data.text + val.substring(end);
-        inputEl.selectionStart = inputEl.selectionEnd = start + data.text.length;
+        const insertText = data.text;
+        inputEl.value = val.substring(0, start) + insertText + val.substring(end);
+        inputEl.selectionStart = inputEl.selectionEnd = start + insertText.length;
         inputEl.style.height = 'auto';
         inputEl.style.height = inputEl.scrollHeight + 'px';
         inputEl.focus();
+        // Track position of Moonshine chunks for gatekeeper corrections
+        if (data.chunk_index !== undefined && data.stage === 'moonshine') {
+          window._moonChunks.push({
+            index: data.chunk_index,
+            startPos: start,
+            endPos: start + insertText.length,
+            text: insertText,
+          });
+        }
       } else if (data.type === 'dreamnode_detected') {
         // A DreamNode name was recognized in the transcript — add to context petals
         const node = findCatalogNode(data.folder, data.title, data.uuid);
@@ -1895,6 +1908,7 @@ function connectTranscriptionWs() {
         }
       } else if (data.type === 'stream_ended') {
         // Leave text in the input field for editing — don't auto-send
+        window._moonChunks = [];
         document.getElementById('vocab-debug').classList.remove('active');
         inputEl.focus();
         inputEl.style.height = 'auto';
@@ -1913,26 +1927,62 @@ function connectTranscriptionWs() {
         }
       } else if (data.type === 'transcript_correction') {
         // Stage 3: Gatekeeper refined the Moonshine output
-        // Replace original text in the input field with the refined version
-        const original = data.original_text;
+        // Replace tracked Moonshine chunks by position range
+        const indices = data.original_indices || [];
         const refined = data.refined_text;
-        if (original && refined && original !== refined) {
-          const idx = inputEl.value.indexOf(original);
-          if (idx !== -1) {
-            const before = inputEl.value.substring(0, idx);
-            const after = inputEl.value.substring(idx + original.length);
-            inputEl.value = before + refined + after;
-            inputEl.style.height = 'auto';
-            inputEl.style.height = inputEl.scrollHeight + 'px';
-            console.log('[Gatekeeper] Correction applied:', refined.substring(0, 80) + '...');
+        if (refined && indices.length > 0 && window._moonChunks && window._moonChunks.length > 0) {
+          // Find matching chunks by index
+          const matching = window._moonChunks.filter(c => indices.includes(c.index));
+          if (matching.length > 0) {
+            // Get the contiguous range in the input field
+            const rangeStart = Math.min(...matching.map(c => c.startPos));
+            const rangeEnd = Math.max(...matching.map(c => c.endPos));
+            const val = inputEl.value;
+            // Verify the range is still valid (user may have edited)
+            if (rangeStart >= 0 && rangeEnd <= val.length) {
+              const originalInField = val.substring(rangeStart, rangeEnd);
+              // Preserve leading space if the original had one
+              const prefix = originalInField.startsWith(' ') && !refined.startsWith(' ') ? ' ' : '';
+              inputEl.value = val.substring(0, rangeStart) + prefix + refined + val.substring(rangeEnd);
+              // Adjust positions of any later chunks
+              const delta = (prefix + refined).length - (rangeEnd - rangeStart);
+              for (const c of window._moonChunks) {
+                if (c.startPos >= rangeEnd) {
+                  c.startPos += delta;
+                  c.endPos += delta;
+                }
+              }
+              // Remove corrected chunks from tracking
+              window._moonChunks = window._moonChunks.filter(c => !indices.includes(c.index));
+              inputEl.style.height = 'auto';
+              inputEl.style.height = inputEl.scrollHeight + 'px';
+              console.log('[Gatekeeper] Correction applied:', refined.substring(0, 80) + '...');
+            } else {
+              console.log('[Gatekeeper] Range invalid (user edited?), trying text match fallback');
+              // Fallback: try normalized text matching
+              const original = data.original_text;
+              if (original) {
+                const normOrig = original.trim();
+                const normVal = inputEl.value;
+                const idx = normVal.indexOf(normOrig);
+                if (idx !== -1) {
+                  inputEl.value = normVal.substring(0, idx) + refined + normVal.substring(idx + normOrig.length);
+                  inputEl.style.height = 'auto';
+                  inputEl.style.height = inputEl.scrollHeight + 'px';
+                  console.log('[Gatekeeper] Correction applied via fallback:', refined.substring(0, 80) + '...');
+                }
+              }
+            }
           } else {
-            console.log('[Gatekeeper] Original text not found in input, skipping correction');
+            console.log('[Gatekeeper] No matching chunks found for indices:', indices);
           }
         }
       } else if (data.type === 'vocab_update') {
         renderVocabDebug(data);
       } else if (data.type === 'session_started') {
         console.log('[AURYN] Transcription session:', data.session_id);
+        // Reset chunk tracking for new session
+        window._moonChunks = [];
         // Show vocab debug panel during transcription
         document.getElementById('vocab-debug').classList.add('active');
       }
