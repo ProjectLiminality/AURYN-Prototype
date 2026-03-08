@@ -1989,13 +1989,18 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                                 if t.lower() not in seen_vocab:
                                     seen_vocab.add(t.lower())
                                     all_vocab.append(t)
-                            # Add ALL DreamNode titles from the index
+                            # Add ALL DreamNode names from the index.
+                            # Use folder name (compact: "ATARAXIA") over title
+                            # (may be spaced: "A T A R A X I A") for better LLM matching.
                             if context_index and "nodes" in context_index:
                                 for node in context_index["nodes"]:
+                                    folder = node.get("folder", "")
                                     title = node.get("title", "")
-                                    if title and title.lower() not in seen_vocab and len(title) >= 3:
-                                        seen_vocab.add(title.lower())
-                                        all_vocab.append(title)
+                                    # Prefer folder name (compact), fall back to title
+                                    name = folder if folder and len(folder) >= 3 else title
+                                    if name and name.lower() not in seen_vocab and len(name) >= 3:
+                                        seen_vocab.add(name.lower())
+                                        all_vocab.append(name)
                             recent_ctx = list(sliding_window[-3:])
 
                             gatekeeper_result = await _ollama_gatekeeper(
