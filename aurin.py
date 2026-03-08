@@ -2007,23 +2007,25 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                         ]
 
                         if moon_combined:
+                            # ALWAYS remove processed chunks immediately so they
+                            # aren't re-selected on the next Whisper cycle
+                            processed_indices = set(chunk_indices)
+                            moonshine_chunks[:] = [
+                                mc for mc in moonshine_chunks
+                                if mc["index"] not in processed_indices
+                            ]
+
                             # Build FULL vocab list for gatekeeper — ALL titles, no cutoff.
-                            # Benchmarked: 522 titles = 2.7k prompt tokens, ~1.5s on qwen2.5:3b.
-                            # Ordered: core + pinned + ephemeral + all remaining titles
                             seen_vocab = set()
                             all_vocab = []
                             for t in list(_CORE_VOCAB) + list(pinned_vocab) + list(ephemeral_vocab):
                                 if t.lower() not in seen_vocab:
                                     seen_vocab.add(t.lower())
                                     all_vocab.append(t)
-                            # Add ALL DreamNode names from the index.
-                            # Use folder name (compact: "ATARAXIA") over title
-                            # (may be spaced: "A T A R A X I A") for better LLM matching.
                             if context_index and "nodes" in context_index:
                                 for node in context_index["nodes"]:
                                     folder = node.get("folder", "")
                                     title = node.get("title", "")
-                                    # Prefer folder name (compact), fall back to title
                                     name = folder if folder and len(folder) >= 3 else title
                                     if name and name.lower() not in seen_vocab and len(name) >= 3:
                                         seen_vocab.add(name.lower())
@@ -2037,7 +2039,6 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                             if gatekeeper_result and gatekeeper_result["text"].strip():
                                 refined = gatekeeper_result["text"].strip()
                                 if refined != moon_combined:
-                                    # Send correction to UI
                                     await ws.send_json({
                                         "type": "transcript_correction",
                                         "original_indices": chunk_indices,
@@ -2045,25 +2046,14 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                                         "refined_text": refined,
                                         "stage": "gatekeeper",
                                     })
-                                    # Update the transcript parts — replace Moonshine entries
-                                    # with the refined version
                                     _write_transcript_chunk(f"[refined] {refined}", start_time)
                                     plog(f"[Gatekeeper] Correction: {refined[:80]}...")
 
-                                # Remove processed chunks so they aren't re-corrected
-                                processed_indices = set(chunk_indices)
-                                moonshine_chunks[:] = [
-                                    mc for mc in moonshine_chunks
-                                    if mc["index"] not in processed_indices
-                                ]
-
-                                # Process any vocab hits from gatekeeper (false negative recovery)
+                                # Process any vocab hits from gatekeeper
                                 core_lower = {t.lower() for t in _CORE_VOCAB}
                                 for term in gatekeeper_result.get("vocab_hits", []):
-                                    # Look up by title (case-insensitive)
                                     info = _vocab_lookup.get(term.lower())
                                     if info:
-                                        # Pin if not already in core or pinned
                                         if term not in pinned_vocab and info["title"].lower() not in core_lower:
                                             pinned_vocab.append(info["title"])
                                             plog(f"[Gatekeeper] PINNED via LLM: {info['title']}")
