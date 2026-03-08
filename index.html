@@ -817,6 +817,13 @@ window.addEventListener('message', (e) => {
     return;
   }
 
+  // DreamSpace UI context updates (selected node, navigation)
+  if (d.type === 'dreamspace-context') {
+    window._dreamspaceContext = d;
+    console.log('[AURYN] DreamSpace context:', d.selectedNode?.name || 'none');
+    return;
+  }
+
   if (d.requestId !== currentRequestId) return;
 
   if (d.type === 'ai-inference-stream-chunk') {
@@ -1789,6 +1796,18 @@ async function sendMessage(text) {
       .join('\n\n');
     if (contextBlock) {
       systemContent += '\n\n## Loaded DreamNode Context\n\nThe following DreamNode READMEs are loaded as context petals. Use these to answer questions and to route insights via edit_readme.\n\n' + contextBlock;
+    }
+  }
+
+  // Inject DreamSpace UI context if available
+  if (window._dreamspaceContext) {
+    const ctx = window._dreamspaceContext;
+    const parts = [];
+    if (ctx.selectedNode) {
+      parts.push(`Selected DreamNode: ${ctx.selectedNode.name} (${ctx.selectedNode.type}, folder: ${ctx.selectedNode.folderName})`);
+    }
+    if (parts.length > 0) {
+      systemContent += '\n\n## DreamSpace UI Context\n\n' + parts.join('\n');
     }
   }
 
