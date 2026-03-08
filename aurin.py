@@ -1439,13 +1439,31 @@ Respond ONLY with JSON:
                 body = await resp.json()
                 raw = body.get("response", "").strip()
 
-        # Extract JSON from response (may have markdown fences)
-        json_match = re.search(r'\{[^{}]*\}', raw, re.DOTALL)
-        if not json_match:
+        # Extract JSON from response (may have markdown fences or pretty-printing)
+        # Try progressively: full response as JSON, then find outermost {…}
+        result = None
+        # Strip markdown fences if present
+        cleaned = re.sub(r'```json\s*', '', raw)
+        cleaned = re.sub(r'```\s*$', '', cleaned).strip()
+        try:
+            result = json.loads(cleaned)
+        except (json.JSONDecodeError, ValueError):
+            # Find the outermost JSON object by matching balanced braces
+            start_idx = cleaned.find('{')
+            if start_idx != -1:
+                depth = 0
+                for i in range(start_idx, len(cleaned)):
+                    if cleaned[i] == '{': depth += 1
+                    elif cleaned[i] == '}': depth -= 1
+                    if depth == 0:
+                        try:
+                            result = json.loads(cleaned[start_idx:i+1])
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                        break
+        if result is None:
             plog(f"[Gatekeeper] No JSON in response: {raw[:200]}")
             return None
-
-        result = json.loads(json_match.group())
         if "text" not in result:
             return None
         if "vocab_hits" not in result:

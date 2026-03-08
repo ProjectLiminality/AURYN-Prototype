@@ -1930,6 +1930,11 @@ function connectTranscriptionWs() {
         // Replace tracked Moonshine chunks by position range
         const indices = data.original_indices || [];
         const refined = data.refined_text;
+        console.log('[Gatekeeper] Received correction:', JSON.stringify({
+          indices, refined: refined?.substring(0, 60),
+          trackedChunks: (window._moonChunks || []).map(c => ({i: c.index, s: c.startPos, e: c.endPos})),
+          inputLen: inputEl.value.length,
+        }));
         if (refined && indices.length > 0 && window._moonChunks && window._moonChunks.length > 0) {
           // Find matching chunks by index
           const matching = window._moonChunks.filter(c => indices.includes(c.index));
