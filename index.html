@@ -1911,6 +1911,24 @@ function connectTranscriptionWs() {
           stopRecordingResolve();
           stopRecordingResolve = null;
         }
+      } else if (data.type === 'transcript_correction') {
+        // Stage 3: Gatekeeper refined the Moonshine output
+        // Replace original text in the input field with the refined version
+        const original = data.original_text;
+        const refined = data.refined_text;
+        if (original && refined && original !== refined) {
+          const idx = inputEl.value.indexOf(original);
+          if (idx !== -1) {
+            const before = inputEl.value.substring(0, idx);
+            const after = inputEl.value.substring(idx + original.length);
+            inputEl.value = before + refined + after;
+            inputEl.style.height = 'auto';
+            inputEl.style.height = inputEl.scrollHeight + 'px';
+            console.log('[Gatekeeper] Correction applied:', refined.substring(0, 80) + '...');
+          } else {
+            console.log('[Gatekeeper] Original text not found in input, skipping correction');
+          }
+        }
       } else if (data.type === 'vocab_update') {
         renderVocabDebug(data);
       } else if (data.type === 'session_started') {

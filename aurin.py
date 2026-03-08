@@ -3,10 +3,9 @@
 # dependencies = [
 #     "aiohttp>=3.9",
 #     "mlx-whisper>=0.4",
+#     "moonshine-voice>=0.0.49",
 # ]
 # ///
-# NOTE: dependencies are commented out above because uv resolves them
-# from a cached environment. Uncomment if starting from a clean install.
 """
 AURYN self-serving server + fast context provider.
 
@@ -1343,9 +1342,129 @@ async def _stream_claude(
 
 
 # ============================================================
-# Transcription WebSocket (/ws/transcribe) — Whisper chunked
+# Transcription WebSocket (/ws/transcribe) — Three-stage pipeline:
+#   Stage 1: Moonshine (immediate display, ~258ms TTFT)
+#   Stage 2: Whisper vocab scan (parallel, ~1-2s later)
+#   Stage 3: Ollama LLM gatekeeper (refinement + vocab gating)
 # with vocabulary feedback loop via context provider
 # ============================================================
+
+# --- Moonshine (Stage 1) — lazy initialization ---
+_moonshine_transcriber = None
+_moonshine_available = None  # None = not yet checked, True/False = result
+
+def _get_moonshine():
+    """Lazy-initialize Moonshine transcriber. Returns Transcriber or None."""
+    global _moonshine_transcriber, _moonshine_available
+    if _moonshine_available is False:
+        return None
+    if _moonshine_transcriber is not None:
+        return _moonshine_transcriber
+    try:
+        from moonshine_voice.transcriber import Transcriber
+        from moonshine_voice.utils import get_model_path
+        model_path = get_model_path("base")
+        _moonshine_transcriber = Transcriber(model_path)
+        _moonshine_available = True
+        print(f"[Moonshine] Initialized (model: base, path: {model_path})")
+        return _moonshine_transcriber
+    except Exception as e:
+        _moonshine_available = False
+        print(f"[Moonshine] Not available, falling back to Whisper-only: {e}")
+        return None
+
+
+# --- Ollama LLM Gatekeeper (Stage 3) ---
+_OLLAMA_GATEKEEPER_MODEL = "qwen2.5:3b"
+
+async def _ollama_gatekeeper(
+    moonshine_text: str,
+    whisper_text: str,
+    vocab_list: list[str],
+    recent_context: list[str],
+) -> dict | None:
+    """Stage 3: Call Ollama HTTP API to refine transcript using both outputs.
+
+    Returns dict with keys: text, vocab_hits (list of confirmed terms)
+    or None on failure.
+    """
+    context_lines = "\n".join(f"  - {line}" for line in recent_context[-3:]) if recent_context else "  (none)"
+    vocab_str = ", ".join(vocab_list[:30]) if vocab_list else "(none)"
+
+    prompt = f"""You are a transcript refinement assistant. You receive two transcriptions of the same audio:
+- Moonshine (fast, primary): {moonshine_text}
+- Whisper (vocabulary-primed): {whisper_text}
+
+Active vocabulary (DreamNode titles): {vocab_str}
+
+Recent confirmed sentences:
+{context_lines}
+
+Your job (respond in JSON only, no explanation):
+1. Produce the best transcript by using Moonshine as base, applying vocabulary corrections from Whisper where phonetically plausible
+2. Fix punctuation and capitalization
+3. List any vocabulary terms that are confirmed present (phonetically match what was said)
+
+Respond ONLY with JSON:
+{{"text": "refined transcript", "vocab_hits": ["term1", "term2"]}}"""
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "http://127.0.0.1:11434/api/generate",
+                json={
+                    "model": _OLLAMA_GATEKEEPER_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_predict": 150},
+                },
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    print(f"[Gatekeeper] Ollama HTTP {resp.status}")
+                    return None
+                body = await resp.json()
+                raw = body.get("response", "").strip()
+
+        # Extract JSON from response (may have markdown fences)
+        json_match = re.search(r'\{[^{}]*\}', raw, re.DOTALL)
+        if not json_match:
+            print(f"[Gatekeeper] No JSON in response: {raw[:200]}")
+            return None
+
+        result = json.loads(json_match.group())
+        if "text" not in result:
+            return None
+        if "vocab_hits" not in result:
+            result["vocab_hits"] = []
+        return result
+
+    except asyncio.TimeoutError:
+        print(f"[Gatekeeper] Ollama timeout (15s)")
+        return None
+    except Exception as e:
+        print(f"[Gatekeeper] Error: {e}")
+        return None
+
+
+# --- Moonshine audio decoding helper ---
+async def _decode_webm_chunk_to_pcm(webm_data: bytes) -> list[float] | None:
+    """Decode webm/opus audio bytes to PCM float samples at 16kHz mono.
+    Returns list of floats or None on failure."""
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-i", "pipe:0",
+        "-ar", "16000", "-ac", "1", "-f", "f32le", "pipe:1",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate(input=webm_data)
+    if proc.returncode != 0 or not stdout:
+        return None
+    # Convert raw f32le bytes to list of floats
+    num_samples = len(stdout) // 4
+    return list(struct.unpack(f'{num_samples}f', stdout))
+
 
 # mlx-whisper model mapping (size -> HuggingFace repo)
 _MLX_WHISPER_MODELS = {
@@ -1515,8 +1634,9 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
     start_time: float = 0.0
     cumulative_webm = bytearray()
     last_processed_bytes = 0
-    chunk_interval = 8.0  # seconds between transcription passes
+    chunk_interval = 8.0  # seconds between Whisper transcription passes
     process_task: asyncio.Task | None = None
+    moonshine_task: asyncio.Task | None = None
 
     # Vocabulary feedback loop state
     context_index = load_index()
@@ -1710,9 +1830,90 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 
     last_transcribed_sec = 0.0  # seconds of audio already transcribed
 
-    async def periodic_transcribe():
-        """Every chunk_interval seconds, transcribe only the new audio."""
-        nonlocal last_processed_bytes, last_transcribed_sec
+    # --- Three-stage pipeline state ---
+    moonshine = _get_moonshine()
+    moonshine_interval = 3.0  # Stage 1: fast cycle (3s)
+    moonshine_last_sec = 0.0  # audio seconds already processed by Moonshine
+    # Track Moonshine chunks by index for retroactive correction
+    moonshine_chunk_index = 0  # incremented for each Moonshine chunk sent to UI
+    # Store Moonshine text per chunk for gatekeeper comparison
+    moonshine_chunks: list[dict] = []  # [{index, text, start_sec, end_sec}]
+    whisper_last_sec = 0.0  # audio seconds already processed by Whisper
+
+    def _moonshine_transcribe_sync(wav_path: str) -> str:
+        """Synchronous Moonshine transcription (non-streaming). Called from executor."""
+        if moonshine is None:
+            return ""
+        try:
+            from moonshine_voice.utils import load_wav_file
+            audio_data = load_wav_file(wav_path)
+            result = moonshine.transcribe_without_streaming(audio_data, sample_rate=16000)
+            return " ".join(line.text.strip() for line in result.lines if line.text.strip())
+        except Exception as e:
+            print(f"[Moonshine] Transcription error: {e}")
+            return ""
+
+    async def periodic_moonshine():
+        """Stage 1: Moonshine fast transcription every moonshine_interval seconds.
+        Sends transcript_chunk immediately for low-latency display."""
+        nonlocal moonshine_last_sec, moonshine_chunk_index
+        while True:
+            await asyncio.sleep(moonshine_interval)
+            if not audio_file or not audio_file.exists():
+                continue
+
+            total_sec = time.time() - start_time
+            if total_sec - moonshine_last_sec < moonshine_interval * 0.5:
+                continue  # not enough new audio
+
+            # Extract new audio (small overlap for context)
+            overlap = 0.5 if moonshine_last_sec > 0 else 0.0
+            extract_from = max(0, moonshine_last_sec - overlap)
+            wav_path = await _extract_time_range_file(str(audio_file), extract_from)
+            if not wav_path:
+                continue
+
+            try:
+                new_text = await loop.run_in_executor(None, _moonshine_transcribe_sync, wav_path)
+                new_text = _filter_hallucination(new_text)
+
+                if new_text:
+                    chunk_idx = moonshine_chunk_index
+                    moonshine_chunk_index += 1
+                    moonshine_chunks.append({
+                        "index": chunk_idx,
+                        "text": new_text,
+                        "start_sec": moonshine_last_sec,
+                        "end_sec": total_sec,
+                    })
+
+                    # Send immediately — this is the fast path
+                    chunk_text = " " + new_text if transcript_parts else new_text
+                    await ws.send_json({
+                        "type": "transcript_chunk",
+                        "text": chunk_text,
+                        "chunk_index": chunk_idx,
+                        "stage": "moonshine",
+                    })
+                    transcript_parts.append(new_text)
+                    _write_transcript_chunk(new_text, start_time)
+                    print(f"[Moonshine] Chunk {chunk_idx}: {new_text[:80]}...")
+
+                moonshine_last_sec = total_sec
+
+            except Exception as e:
+                print(f"[Moonshine] Error: {e}")
+            finally:
+                try:
+                    os.unlink(wav_path)
+                except OSError:
+                    pass
+
+    async def periodic_whisper_and_gatekeeper():
+        """Stage 2+3: Whisper vocabulary scan + Ollama gatekeeper refinement.
+        Runs every chunk_interval seconds. When Moonshine is active, this
+        produces corrections rather than primary transcript."""
+        nonlocal last_processed_bytes, last_transcribed_sec, whisper_last_sec
         while True:
             await asyncio.sleep(chunk_interval)
             if not audio_file or not audio_file.exists():
@@ -1720,17 +1921,12 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
             if len(cumulative_webm) <= last_processed_bytes:
                 continue
 
-            # Elapsed time since session start = total audio duration
-            # (MediaRecorder streams in real time, so wall clock ≈ audio clock)
             total_sec = time.time() - start_time
 
-            # Extract new audio with 1.5s overlap so Whisper gets full
-            # sentence context instead of cutting mid-word
-            overlap = 1.5 if last_transcribed_sec > 0 else 0.0
-            extract_from = max(0, last_transcribed_sec - overlap)
-            wav_path = await _extract_time_range_file(
-                str(audio_file), extract_from
-            )
+            # Extract new audio with overlap for Whisper context
+            overlap = 1.5 if whisper_last_sec > 0 else 0.0
+            extract_from = max(0, whisper_last_sec - overlap)
+            wav_path = await _extract_time_range_file(str(audio_file), extract_from)
             if not wav_path:
                 last_processed_bytes = len(cumulative_webm)
                 continue
@@ -1747,32 +1943,86 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                     lambda p=prompt, w=wav_path: _transcribe_sync(w, p),
                 )
 
-                # Skip segments in the overlap region — they belong to
-                # the previous chunk. Keep segments starting after overlap.
-                # Use a soft threshold: any segment whose midpoint is past
-                # the overlap belongs to this chunk.
                 segs = result["segments"]
                 if overlap > 0 and segs:
                     segs = [s for s in segs
                             if (s["start"] + s["end"]) / 2 >= overlap]
 
-                new_text = " ".join(
+                whisper_text = " ".join(
                     s["text"].strip() for s in segs
                 ).strip()
 
-                # Filter hallucinated repetition (Whisper loops on silence)
-                new_text = _filter_hallucination(new_text)
+                whisper_text = _filter_hallucination(whisper_text)
 
-                if new_text:
-                    # Process vocab hits first so capitalization is fixed
-                    # before sending to UI and writing to transcript
-                    new_text = await _process_new_text(new_text)
-                    chunk_text = " " + new_text if transcript_parts else new_text
-                    await ws.send_json({"type": "transcript_chunk", "text": chunk_text})
-                    transcript_parts.append(new_text)
-                    _write_transcript_chunk(new_text, start_time)
+                if whisper_text:
+                    # Process vocab hits (pinning, BM25 ephemeral update)
+                    whisper_text = await _process_new_text(whisper_text)
                     await _send_vocab_state()
 
+                    if moonshine is not None and moonshine_chunks:
+                        # Stage 3: Gatekeeper — refine using both outputs
+                        # Find Moonshine chunks that overlap this Whisper window
+                        moon_texts = [
+                            mc["text"] for mc in moonshine_chunks
+                            if mc["end_sec"] > whisper_last_sec and mc["start_sec"] < total_sec
+                        ]
+                        moon_combined = " ".join(moon_texts) if moon_texts else ""
+                        chunk_indices = [
+                            mc["index"] for mc in moonshine_chunks
+                            if mc["end_sec"] > whisper_last_sec and mc["start_sec"] < total_sec
+                        ]
+
+                        if moon_combined:
+                            # Build vocab list for gatekeeper
+                            all_vocab = list(_CORE_VOCAB) + list(pinned_vocab) + list(ephemeral_vocab)
+                            recent_ctx = list(sliding_window[-3:])
+
+                            gatekeeper_result = await _ollama_gatekeeper(
+                                moon_combined, whisper_text, all_vocab, recent_ctx
+                            )
+
+                            if gatekeeper_result and gatekeeper_result["text"].strip():
+                                refined = gatekeeper_result["text"].strip()
+                                if refined != moon_combined:
+                                    # Send correction to UI
+                                    await ws.send_json({
+                                        "type": "transcript_correction",
+                                        "original_indices": chunk_indices,
+                                        "original_text": moon_combined,
+                                        "refined_text": refined,
+                                        "stage": "gatekeeper",
+                                    })
+                                    # Update the transcript parts — replace Moonshine entries
+                                    # with the refined version
+                                    _write_transcript_chunk(f"[refined] {refined}", start_time)
+                                    print(f"[Gatekeeper] Correction: {refined[:80]}...")
+
+                                # Process any vocab hits from gatekeeper
+                                for term in gatekeeper_result.get("vocab_hits", []):
+                                    if term in [info["title"] for info in _vocab_lookup.values()]:
+                                        if term not in pinned_vocab:
+                                            pinned_vocab.append(term)
+                                            print(f"[Gatekeeper] PINNED via LLM: {term}")
+                                            # Find and notify
+                                            for info in _vocab_lookup.values():
+                                                if info["title"] == term:
+                                                    await _notify_dreamnode_hit(info)
+                                                    break
+                                _rebuild_prompt()
+                            else:
+                                print(f"[Gatekeeper] No refinement needed or gatekeeper unavailable")
+                        else:
+                            # No Moonshine chunks to compare — shouldn't happen
+                            pass
+                    else:
+                        # No Moonshine — Whisper is primary (original behavior)
+                        chunk_text = " " + whisper_text if transcript_parts else whisper_text
+                        await ws.send_json({"type": "transcript_chunk", "text": chunk_text})
+                        transcript_parts.append(whisper_text)
+                        _write_transcript_chunk(whisper_text, start_time)
+                        await _send_vocab_state()
+
+                whisper_last_sec = total_sec
                 last_transcribed_sec = total_sec
                 last_processed_bytes = len(cumulative_webm)
 
@@ -1798,6 +2048,10 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 cumulative_webm.clear()
                 last_processed_bytes = 0
                 last_transcribed_sec = 0.0
+                moonshine_last_sec = 0.0
+                whisper_last_sec = 0.0
+                moonshine_chunk_index = 0
+                moonshine_chunks.clear()
                 pinned_vocab.clear()
                 ephemeral_vocab.clear()
                 sliding_window.clear()
@@ -1817,10 +2071,23 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 audio_file = RECORDINGS_DIR / f"{ts}{ext}"
                 _start_transcript_session(f"{ts}{ext}", start_time)
 
-                process_task = asyncio.create_task(periodic_transcribe())
-                await ws.send_json({"type": "session_started", "session_id": session_id})
+                # Launch pipeline stages as concurrent tasks
+                if moonshine is not None:
+                    moonshine_task = asyncio.create_task(periodic_moonshine())
+                process_task = asyncio.create_task(periodic_whisper_and_gatekeeper())
+                pipeline_mode = "three-stage (Moonshine→Whisper→Gatekeeper)" if moonshine else "single-stage (Whisper)"
+                print(f"[Pipeline] Started: {pipeline_mode}")
+                await ws.send_json({"type": "session_started", "session_id": session_id, "pipeline": pipeline_mode})
 
             elif data.get("type") == "end_stream":
+                # Cancel all pipeline tasks
+                if moonshine is not None and moonshine_task is not None:
+                    moonshine_task.cancel()
+                    try:
+                        await moonshine_task
+                    except asyncio.CancelledError:
+                        pass
+                    moonshine_task = None
                 if process_task:
                     process_task.cancel()
                     try:
@@ -1900,6 +2167,8 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 
     if process_task:
         process_task.cancel()
+    if moonshine is not None and moonshine_task is not None:
+        moonshine_task.cancel()
 
     return ws
 
