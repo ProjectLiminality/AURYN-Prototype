@@ -2050,6 +2050,13 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                                     _write_transcript_chunk(f"[refined] {refined}", start_time)
                                     plog(f"[Gatekeeper] Correction: {refined[:80]}...")
 
+                                # Remove processed chunks so they aren't re-corrected
+                                processed_indices = set(chunk_indices)
+                                moonshine_chunks[:] = [
+                                    mc for mc in moonshine_chunks
+                                    if mc["index"] not in processed_indices
+                                ]
+
                                 # Process any vocab hits from gatekeeper (false negative recovery)
                                 core_lower = {t.lower() for t in _CORE_VOCAB}
                                 for term in gatekeeper_result.get("vocab_hits", []):

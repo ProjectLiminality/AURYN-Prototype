@@ -1875,29 +1875,21 @@ function connectTranscriptionWs() {
     transcriptionWs.onmessage = (e) => {
       const data = JSON.parse(e.data);
 
-      // Track Moonshine chunk positions for retroactive correction
-      if (!window._moonChunks) window._moonChunks = [];
+      // Chunk-array model: input field is rebuilt from this array.
+      // Corrections update entries in-place, avoiding position drift.
+      if (!window._txChunks) window._txChunks = [];
+      if (!window._txPrefix) window._txPrefix = ''; // text typed before recording
 
       if (data.type === 'transcript_chunk') {
-        // Insert at cursor position in the textarea
-        const start = inputEl.selectionStart;
-        const end = inputEl.selectionEnd;
-        const val = inputEl.value;
-        const insertText = data.text;
-        inputEl.value = val.substring(0, start) + insertText + val.substring(end);
-        inputEl.selectionStart = inputEl.selectionEnd = start + insertText.length;
+        // Append chunk to array
+        const entry = { index: data.chunk_index, text: data.text, stage: data.stage || 'whisper' };
+        window._txChunks.push(entry);
+        // Rebuild input field from chunk array
+        inputEl.value = window._txPrefix + window._txChunks.map(c => c.text).join('');
+        inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length;
         inputEl.style.height = 'auto';
         inputEl.style.height = inputEl.scrollHeight + 'px';
         inputEl.focus();
-        // Track position of Moonshine chunks for gatekeeper corrections
-        if (data.chunk_index !== undefined && data.stage === 'moonshine') {
-          window._moonChunks.push({
-            index: data.chunk_index,
-            startPos: start,
-            endPos: start + insertText.length,
-            text: insertText,
-          });
-        }
       } else if (data.type === 'dreamnode_detected') {
         // A DreamNode name was recognized in the transcript — add to context petals
         const node = findCatalogNode(data.folder, data.title, data.uuid);
@@ -1908,7 +1900,8 @@ function connectTranscriptionWs() {
         }
       } else if (data.type === 'stream_ended') {
         // Leave text in the input field for editing — don't auto-send
-        window._moonChunks = [];
+        window._txChunks = [];
+        window._txPrefix = '';
         document.getElementById('vocab-debug').classList.remove('active');
         inputEl.focus();
         inputEl.style.height = 'auto';
@@ -1927,67 +1920,45 @@ function connectTranscriptionWs() {
         }
       } else if (data.type === 'transcript_correction') {
         // Stage 3: Gatekeeper refined the Moonshine output
-        // Replace tracked Moonshine chunks by position range
+        // Replace matching chunks in the array, then rebuild input field
         const indices = data.original_indices || [];
         const refined = data.refined_text;
-        console.log('[Gatekeeper] Received correction:', JSON.stringify({
-          indices, refined: refined?.substring(0, 60),
-          trackedChunks: (window._moonChunks || []).map(c => ({i: c.index, s: c.startPos, e: c.endPos})),
-          inputLen: inputEl.value.length,
-        }));
-        if (refined && indices.length > 0 && window._moonChunks && window._moonChunks.length > 0) {
-          // Find matching chunks by index
-          const matching = window._moonChunks.filter(c => indices.includes(c.index));
-          if (matching.length > 0) {
-            // Get the contiguous range in the input field
-            const rangeStart = Math.min(...matching.map(c => c.startPos));
-            const rangeEnd = Math.max(...matching.map(c => c.endPos));
-            const val = inputEl.value;
-            // Verify the range is still valid (user may have edited)
-            if (rangeStart >= 0 && rangeEnd <= val.length) {
-              const originalInField = val.substring(rangeStart, rangeEnd);
-              // Preserve leading space if the original had one
-              const prefix = originalInField.startsWith(' ') && !refined.startsWith(' ') ? ' ' : '';
-              inputEl.value = val.substring(0, rangeStart) + prefix + refined + val.substring(rangeEnd);
-              // Adjust positions of any later chunks
-              const delta = (prefix + refined).length - (rangeEnd - rangeStart);
-              for (const c of window._moonChunks) {
-                if (c.startPos >= rangeEnd) {
-                  c.startPos += delta;
-                  c.endPos += delta;
-                }
-              }
-              // Remove corrected chunks from tracking
-              window._moonChunks = window._moonChunks.filter(c => !indices.includes(c.index));
-              inputEl.style.height = 'auto';
-              inputEl.style.height = inputEl.scrollHeight + 'px';
-              console.log('[Gatekeeper] Correction applied:', refined.substring(0, 80) + '...');
-            } else {
-              console.log('[Gatekeeper] Range invalid (user edited?), trying text match fallback');
-              // Fallback: try normalized text matching
-              const original = data.original_text;
-              if (original) {
-                const normOrig = original.trim();
-                const normVal = inputEl.value;
-                const idx = normVal.indexOf(normOrig);
-                if (idx !== -1) {
-                  inputEl.value = normVal.substring(0, idx) + refined + normVal.substring(idx + normOrig.length);
-                  inputEl.style.height = 'auto';
-                  inputEl.style.height = inputEl.scrollHeight + 'px';
-                  console.log('[Gatekeeper] Correction applied via fallback:', refined.substring(0, 80) + '...');
-                }
-              }
+        if (refined && indices.length > 0 && window._txChunks && window._txChunks.length > 0) {
+          // Find first and last matching chunk positions in the array
+          let firstIdx = -1, lastIdx = -1;
+          for (let i = 0; i < window._txChunks.length; i++) {
+            if (indices.includes(window._txChunks[i].index)) {
+              if (firstIdx === -1) firstIdx = i;
+              lastIdx = i;
             }
+          }
+          if (firstIdx !== -1) {
+            // Preserve leading space from first chunk if refined doesn't have one
+            const firstText = window._txChunks[firstIdx].text;
+            const prefix = firstText.startsWith(' ') && !refined.startsWith(' ') ? ' ' : '';
+            // Replace the range of chunks with a single corrected entry
+            window._txChunks.splice(firstIdx, lastIdx - firstIdx + 1, {
+              index: -1, // corrected chunk, no longer tracked
+              text: prefix + refined,
+              stage: 'gatekeeper',
+            });
+            // Rebuild input field
+            inputEl.value = window._txPrefix + window._txChunks.map(c => c.text).join('');
+            inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length;
+            inputEl.style.height = 'auto';
+            inputEl.style.height = inputEl.scrollHeight + 'px';
+            console.log('[Gatekeeper] Correction applied:', refined.substring(0, 80) + '...');
           } else {
-            console.log('[Gatekeeper] No matching chunks found for indices:', indices);
+            console.log('[Gatekeeper] No matching chunks for indices:', indices);
           }
         }
       } else if (data.type === 'vocab_update') {
         renderVocabDebug(data);
       } else if (data.type === 'session_started') {
         console.log('[AURYN] Transcription session:', data.session_id);
-        // Reset chunk tracking for new session
-        window._moonChunks = [];
+        // Reset chunk array for new session, preserve any existing text as prefix
+        window._txPrefix = inputEl.value;
+        window._txChunks = [];
         // Show vocab debug panel during transcription
         document.getElementById('vocab-debug').classList.add('active');
       }
