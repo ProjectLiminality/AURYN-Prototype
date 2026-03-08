@@ -1397,7 +1397,7 @@ async def _ollama_gatekeeper(
 - Moonshine (fast, primary): {moonshine_text}
 - Whisper (vocabulary-primed): {whisper_text}
 
-Known vocabulary (DreamNode titles — these are project/concept names the speaker uses): {vocab_str}
+Known vocabulary (DreamNode titles — project/concept names the speaker uses, ordered by relevance to the current conversation): {vocab_str}
 
 Recent confirmed sentences:
 {context_lines}
@@ -1407,6 +1407,7 @@ Your job (respond in JSON only, no explanation):
 2. Fix punctuation and capitalization
 3. Detect vocabulary terms that are present — check BOTH transcriptions for matches. A word that SOUNDS like a vocabulary term probably IS that term (e.g. "dream notes" → "DreamNodes", "attraxia" → "ATARAXIA", "interbrain" → "InterBrain"). Catch false negatives that both transcribers missed.
 4. Filter false positives — common English words that happen to match a title but aren't being referenced in context
+5. When two vocabulary terms sound similar, prefer the one appearing earlier in the list — it is more relevant to the current conversation
 
 Respond ONLY with JSON:
 {{"text": "refined transcript", "vocab_hits": ["term1", "term2"]}}"""
