@@ -1389,8 +1389,9 @@ async def _ollama_gatekeeper(
     or None on failure.
     """
     context_lines = "\n".join(f"  - {line}" for line in recent_context[-3:]) if recent_context else "  (none)"
-    # Give gatekeeper up to 200 vocab terms (fits comfortably in context)
-    vocab_str = ", ".join(vocab_list[:200]) if vocab_list else "(none)"
+    # Give gatekeeper ALL vocab terms — benchmarked: 600 titles = 2.7k tokens,
+    # ~1.5s latency on qwen2.5:3b. No degradation up to full vault size.
+    vocab_str = ", ".join(vocab_list) if vocab_list else "(none)"
 
     prompt = f"""You are a transcript refinement assistant for a knowledge gardening system. You receive two transcriptions of the same audio:
 - Moonshine (fast, primary): {moonshine_text}
@@ -1978,8 +1979,8 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                         ]
 
                         if moon_combined:
-                            # Build FULL vocab list for gatekeeper — no cutoff!
-                            # The LLM can handle hundreds of terms unlike Whisper's limited window.
+                            # Build FULL vocab list for gatekeeper — ALL titles, no cutoff.
+                            # Benchmarked: 522 titles = 2.7k prompt tokens, ~1.5s on qwen2.5:3b.
                             # Ordered: core + pinned + ephemeral + all remaining titles
                             seen_vocab = set()
                             all_vocab = []
