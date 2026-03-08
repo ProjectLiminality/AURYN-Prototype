@@ -448,6 +448,16 @@ AURYN is a knowledge topology. No agentic framework is building this — they do
 
 The knowledge gardening layer is deeply human, inherently social, and resistant to pure automation. Someone with well-structured DreamNodes and rich DreamSongs gets dramatically better results from *any* agentic framework than someone with a flat folder of markdown files. AURYN is what makes every tool more effective.
 
+### Memory Taxonomy in DreamOS
+
+DreamOS operates across three distinct temporal layers of memory — each with its own substrate, granularity, and purpose:
+
+- **Cellular memory (git history)**: The deepest, most durable layer. Every commit in every DreamNode is a moment of becoming, permanently encoded. Each DreamNode is a cell of a holographic being — the git log is its evolutionary record. This is the *being* layer.
+- **Medium-term memory (chat sessions)**: Conversational history persists across sessions. AURYN remembers what was discussed, what tasks were kicked off, what context was loaded. This is the *doing* layer — where orchestration happens, where sub-agents are dispatched, where insights are routed to DreamNodes.
+- **Short-term memory (in-context)**: The active conversation window plus loaded DreamNode petals. Ephemeral but rich. This is the *becoming* layer — the present moment of reasoning.
+
+The three are not separate systems; they interpenetrate. Short-term insights get routed by AURYN into git commits (cellular memory). Chat sessions reference DreamNodes (cellular memory) and are themselves searchable (extending medium-term backward in time). The architecture mirrors how biological memory actually works — not a hierarchy but a holarchy.
+
 ### README as Universal Memory
 
 - **Agent-agnostic**: Works with any AI — not coupled to any shell or provider
