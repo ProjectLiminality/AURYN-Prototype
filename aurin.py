@@ -2234,7 +2234,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 moonshine_task = asyncio.create_task(periodic_moonshine())
                 process_task = asyncio.create_task(periodic_whisper_and_gatekeeper())
                 plog(f"[Pipeline] Started: Moonshine→Whisper→Gatekeeper")
-                await ws.send_json({"type": "session_started", "session_id": session_id, "pipeline": pipeline_mode})
+                await ws.send_json({"type": "session_started", "session_id": session_id, "pipeline": "moonshine-whisper-gatekeeper"})
 
             elif data.get("type") == "end_stream":
                 # Cancel all pipeline tasks
