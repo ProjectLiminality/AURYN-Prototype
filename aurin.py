@@ -2225,6 +2225,11 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 audio_file = RECORDINGS_DIR / f"{ts}{ext}"
                 _start_transcript_session(f"{ts}{ext}", start_time)
 
+                # Cancel any existing pipeline tasks before launching new ones
+                if moonshine_task is not None:
+                    moonshine_task.cancel()
+                if process_task is not None:
+                    process_task.cancel()
                 # Launch three-stage pipeline
                 moonshine_task = asyncio.create_task(periodic_moonshine())
                 process_task = asyncio.create_task(periodic_whisper_and_gatekeeper())
@@ -2310,6 +2315,8 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 session_id = None
 
         elif msg.type == aiohttp.WSMsgType.BINARY:
+            if len(cumulative_webm) == 0:
+                plog(f"[Audio] First binary chunk received ({len(msg.data)} bytes)")
             cumulative_webm.extend(msg.data)
             if audio_file:
                 with open(audio_file, "ab") as f:
