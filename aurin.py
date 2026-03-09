@@ -1392,34 +1392,40 @@ async def _ollama_gatekeeper(
     vocab_list: list[str],
     recent_context: list[str],
 ) -> dict | None:
-    """Stage 3: Call Ollama HTTP API to refine transcript using both outputs.
+    """Stage 3: Call Ollama to refine transcript. Returns plain text.
 
-    Returns dict with keys: text, vocab_hits (list of confirmed terms)
+    The LLM's only job is producing refined text. When a spoken word matches
+    a vocabulary term, the LLM uses the EXACT casing from the vocab list
+    (e.g. "ATARAXIA", "InterBrain", "DreamOS"). Regular word usage stays
+    lowercase (e.g. "I love this" even though "Love" is a vocab term).
+
+    Vocab hits are then detected downstream via case-sensitive regex on the
+    refined text — completely decoupled from the LLM's task.
+
+    Returns dict with keys: text (str), vocab_hits (list[str])
     or None on failure.
     """
     context_lines = "\n".join(f"  - {line}" for line in recent_context[-3:]) if recent_context else "  (none)"
-    # Give gatekeeper ALL vocab terms — benchmarked: 600 titles = 2.7k tokens,
-    # ~1.5s latency on qwen2.5:3b. No degradation up to full vault size.
     vocab_str = ", ".join(vocab_list) if vocab_list else "(none)"
 
-    prompt = f"""You are a transcript refinement assistant for a knowledge gardening system. You receive two transcriptions of the same audio:
+    prompt = f"""You are a transcript refinement assistant. You receive two transcriptions of the same audio:
 - Moonshine (fast, primary): {moonshine_text}
 - Whisper (vocabulary-primed): {whisper_text}
 
-Known vocabulary (DreamNode titles — project/concept names the speaker uses, ordered by relevance to the current conversation): {vocab_str}
+Known vocabulary (exact names of projects and concepts the speaker uses, ordered by relevance): {vocab_str}
 
 Recent confirmed sentences:
 {context_lines}
 
-Your job (respond in JSON only, no explanation):
-1. Produce the best transcript by using Moonshine as base, applying vocabulary corrections from Whisper where phonetically plausible
+Produce the best refined transcript. Rules:
+1. Use Moonshine as base, apply vocabulary corrections from Whisper where phonetically plausible
 2. Fix punctuation and capitalization
-3. Detect vocabulary terms that are present — check BOTH transcriptions for matches. A word that SOUNDS like a vocabulary term probably IS that term (e.g. "dream notes" → "DreamNodes", "attraxia" → "ATARAXIA", "interbrain" → "InterBrain"). Catch false negatives that both transcribers missed.
-4. Filter false positives — common English words that happen to match a title but aren't being referenced in context
-5. When two vocabulary terms sound similar, prefer the one appearing earlier in the list — it is more relevant to the current conversation
+3. When a spoken word matches a vocabulary term, use its EXACT casing from the list above (e.g. "dream notes" → "DreamNodes", "attraxia" → "ATARAXIA", "interbrain" → "InterBrain")
+4. When a word happens to match a vocabulary term but is just regular speech, keep it lowercase (e.g. "I love this feature" stays lowercase even if "Love" is in the vocabulary — the speaker is not invoking the concept)
+5. When two vocabulary terms sound similar, prefer the one earlier in the list
+6. Do NOT add vocabulary terms that were not spoken — only correct terms that sound like they were intended
 
-Respond ONLY with JSON:
-{{"text": "refined transcript", "vocab_hits": ["term1", "term2"]}}"""
+Respond with ONLY the refined transcript text, nothing else. No JSON, no explanation, no quotes around the text."""
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -1439,36 +1445,36 @@ Respond ONLY with JSON:
                 body = await resp.json()
                 raw = body.get("response", "").strip()
 
-        # Extract JSON from response (may have markdown fences or pretty-printing)
-        # Try progressively: full response as JSON, then find outermost {…}
-        result = None
-        # Strip markdown fences if present
-        cleaned = re.sub(r'```json\s*', '', raw)
-        cleaned = re.sub(r'```\s*$', '', cleaned).strip()
-        try:
-            result = json.loads(cleaned)
-        except (json.JSONDecodeError, ValueError):
-            # Find the outermost JSON object by matching balanced braces
-            start_idx = cleaned.find('{')
-            if start_idx != -1:
-                depth = 0
-                for i in range(start_idx, len(cleaned)):
-                    if cleaned[i] == '{': depth += 1
-                    elif cleaned[i] == '}': depth -= 1
-                    if depth == 0:
-                        try:
-                            result = json.loads(cleaned[start_idx:i+1])
-                        except (json.JSONDecodeError, ValueError):
-                            pass
-                        break
-        if result is None:
-            plog(f"[Gatekeeper] No JSON in response: {raw[:200]}")
+        if not raw:
             return None
-        if "text" not in result:
+
+        # Strip any accidental quotes or markdown the LLM may have added
+        refined = raw.strip().strip('"').strip("'").strip()
+        if refined.startswith("```"):
+            refined = re.sub(r'^```\w*\s*', '', refined)
+            refined = re.sub(r'\s*```$', '', refined)
+            refined = refined.strip()
+
+        if not refined:
             return None
-        if "vocab_hits" not in result:
-            result["vocab_hits"] = []
-        return result
+
+        # Detect vocab hits via case-sensitive matching on the refined text.
+        # A vocab term is a "hit" only if it appears with its EXACT casing —
+        # the LLM's job was to use exact casing for intentional invocations.
+        vocab_hits = []
+        for term in vocab_list:
+            if len(term) < 3:
+                continue
+            # Use word-boundary-aware search to avoid partial matches
+            # For multi-word or CamelCase terms, just check substring
+            if term in refined:
+                vocab_hits.append(term)
+
+        plog(f"[Gatekeeper] Refined: {refined[:80]}...")
+        if vocab_hits:
+            plog(f"[Gatekeeper] Vocab hits (case-sensitive): {vocab_hits}")
+
+        return {"text": refined, "vocab_hits": vocab_hits}
 
     except asyncio.TimeoutError:
         plog(f"[Gatekeeper] Ollama timeout (15s)")
