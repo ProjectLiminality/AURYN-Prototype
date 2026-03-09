@@ -1967,6 +1967,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
         while True:
             await asyncio.sleep(moonshine_interval)
             if not audio_file or not audio_file.exists():
+                plog(f"[Moonshine] No audio file yet")
                 continue
 
             total_sec = time.time() - start_time
@@ -1978,10 +1979,12 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
             extract_from = max(0, moonshine_last_sec - overlap)
             wav_path = await _extract_time_range_file(str(audio_file), extract_from)
             if not wav_path:
+                plog(f"[Moonshine] Audio extraction failed (from {extract_from:.1f}s)")
                 continue
 
             try:
                 new_text = await loop.run_in_executor(None, _moonshine_transcribe_sync, wav_path)
+                plog(f"[Moonshine] Raw output: '{new_text[:80]}'" if new_text else "[Moonshine] Empty output")
                 new_text = _filter_hallucination(new_text)
 
                 if new_text:
