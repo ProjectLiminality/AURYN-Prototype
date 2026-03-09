@@ -2110,9 +2110,16 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                     whisper_text, unrefined_text
                 )
 
-                # Identify which chunk_indices are covered by the aligned segment
+                # Snap to chunk boundaries: expand alignment to cover full chunks
+                # so the UI can cleanly replace entire chunks
                 aligned_word_entries = unrefined_words[align_start:align_end]
-                chunk_indices = sorted(set(mw["chunk_index"] for mw in aligned_word_entries))
+                covered_chunks = set(mw["chunk_index"] for mw in aligned_word_entries)
+                # Expand to include ALL words from any chunk that's partially covered
+                expanded_entries = [mw for mw in unrefined_words if mw["chunk_index"] in covered_chunks]
+                if expanded_entries:
+                    aligned_word_entries = expanded_entries
+                    aligned_moon = " ".join(mw["word"] for mw in aligned_word_entries)
+                chunk_indices = sorted(covered_chunks)
 
                 plog(f"[Alignment] Whisper ({len(whisper_text.split())}w) aligned to Moonshine ({align_end - align_start}w of {len(unrefined_words)}w unrefined)")
                 plog(f"[Gatekeeper] Input A (Moonshine, chunks {chunk_indices}): {aligned_moon[:120]}...")
