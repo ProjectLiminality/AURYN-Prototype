@@ -1920,36 +1920,20 @@ function connectTranscriptionWs() {
         }
       } else if (data.type === 'transcript_correction') {
         // Stage 3: Gatekeeper refined the Moonshine output
-        // Replace matching chunks in the array, then rebuild input field
-        const indices = data.original_indices || [];
-        const refined = data.refined_text;
-        if (refined && indices.length > 0 && window._txChunks && window._txChunks.length > 0) {
-          // Find first and last matching chunk positions in the array
-          let firstIdx = -1, lastIdx = -1;
-          for (let i = 0; i < window._txChunks.length; i++) {
-            if (indices.includes(window._txChunks[i].index)) {
-              if (firstIdx === -1) firstIdx = i;
-              lastIdx = i;
-            }
-          }
-          if (firstIdx !== -1) {
-            // Preserve leading space from first chunk if refined doesn't have one
-            const firstText = window._txChunks[firstIdx].text;
-            const prefix = firstText.startsWith(' ') && !refined.startsWith(' ') ? ' ' : '';
-            // Replace the range of chunks with a single corrected entry
-            window._txChunks.splice(firstIdx, lastIdx - firstIdx + 1, {
-              index: -1, // corrected chunk, no longer tracked
-              text: prefix + refined,
-              stage: 'gatekeeper',
-            });
-            // Rebuild input field
-            inputEl.value = window._txPrefix + window._txChunks.map(c => c.text).join('');
+        // Simple text-based find-and-replace on the input field
+        const findText = data.find_text;
+        const replaceText = data.replace_text;
+        if (findText && replaceText) {
+          const currentVal = inputEl.value;
+          const idx = currentVal.indexOf(findText);
+          if (idx !== -1) {
+            inputEl.value = currentVal.substring(0, idx) + replaceText + currentVal.substring(idx + findText.length);
             inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length;
             inputEl.style.height = 'auto';
             inputEl.style.height = inputEl.scrollHeight + 'px';
-            console.log('[Gatekeeper] Correction applied:', refined.substring(0, 80) + '...');
+            console.log('[Gatekeeper] Correction applied:', replaceText.substring(0, 80) + '...');
           } else {
-            console.log('[Gatekeeper] No matching chunks for indices:', indices);
+            console.log('[Gatekeeper] Find text not found in input:', findText.substring(0, 60));
           }
         }
       } else if (data.type === 'vocab_update') {

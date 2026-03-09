@@ -2104,18 +2104,11 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                     whisper_text, unrefined_text
                 )
 
-                # Snap to chunk boundaries: expand alignment to cover full chunks
-                # so the UI can cleanly replace entire chunks
+                # Use precise alignment — no chunk boundary snapping
                 aligned_word_entries = unrefined_words[align_start:align_end]
-                covered_chunks = set(mw["chunk_index"] for mw in aligned_word_entries)
-                # Expand to include ALL words from any chunk that's partially covered
-                expanded_entries = [mw for mw in unrefined_words if mw["chunk_index"] in covered_chunks]
-                if expanded_entries:
-                    aligned_word_entries = expanded_entries
-                    aligned_moon = " ".join(mw["word"] for mw in aligned_word_entries)
-                chunk_indices = sorted(covered_chunks)
+                chunk_indices = sorted(set(mw["chunk_index"] for mw in aligned_word_entries))
 
-                plog(f"[Alignment] Whisper ({len(whisper_text.split())}w) aligned to Moonshine ({align_end - align_start}w of {len(unrefined_words)}w unrefined)")
+                plog(f"[Alignment] Whisper ({len(whisper_text.split())}w) aligned to Moonshine ({align_end - align_start}w of {len(unrefined_words)}w unrefined, chunks {chunk_indices})")
                 plog(f"[Gatekeeper] Input A (Moonshine, chunks {chunk_indices}): {aligned_moon[:120]}...")
                 plog(f"[Gatekeeper] Input B (Whisper): {whisper_text[:120]}...")
 
@@ -2154,13 +2147,12 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                     if len(refined_history) > 5:
                         refined_history.pop(0)
 
-                    # Send correction to UI if text changed
+                    # Send correction to UI — text-based replacement
                     if refined != aligned_moon:
                         await ws.send_json({
                             "type": "transcript_correction",
-                            "original_indices": chunk_indices,
-                            "original_text": aligned_moon,
-                            "refined_text": refined,
+                            "find_text": aligned_moon,
+                            "replace_text": refined,
                             "stage": "gatekeeper",
                         })
                         _write_transcript_chunk(f"[refined] {refined}", start_time)
