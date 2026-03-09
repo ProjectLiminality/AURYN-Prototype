@@ -1472,24 +1472,22 @@ async def _ollama_gatekeeper(
     context_lines = "\n".join(f"  - {line}" for line in recent_context[-3:]) if recent_context else "  (none)"
     vocab_str = ", ".join(vocab_list) if vocab_list else "(none)"
 
-    prompt = f"""Refine this transcript segment. You receive two transcriptions of the SAME audio clip:
+    prompt = f"""Two transcriptions of the SAME spoken segment:
 A: {moonshine_text}
 B: {whisper_text}
 
-Vocabulary (project/concept names, exact casing): {vocab_str}
+Vocabulary (exact casing): {vocab_str}
 
-Context (previous sentences, for reference only — do NOT repeat them):
-{context_lines}
+Previous (for context only — do NOT repeat): {context_lines}
 
-Output ONLY the refined version of this segment. Rules:
-- Use A as base, apply corrections from B where phonetically plausible
-- Fix punctuation and capitalization
-- When a word SOUNDS like a vocabulary term, REPLACE the entire word with the vocabulary spelling (e.g. "attraxia" → "ATARAXIA", "dream notes" → "DreamNodes", "holo fractal" → "HolofractalUniverse")
-- When a word matches vocabulary but is regular speech, keep lowercase (e.g. "I love this" — not invoking the concept "Love")
-- NEVER insert vocabulary casing inside another word (e.g. "wanna" must stay "wanna", not "wAnna")
-- Do NOT repeat or include any text from the context sentences above
-- Do NOT add vocabulary terms that were not spoken
-- Output ONLY the refined segment, nothing else"""
+Produce ONE refined version. Rules:
+- Merge A and B: use the more accurate word at each position
+- Fix punctuation, capitalization, and word boundaries
+- When a spoken word SOUNDS like a vocabulary term, use the vocabulary spelling (e.g. "attraxia" → "ATARAXIA", "dream notes" → "DreamNodes", "holo fractal" → "HolofractalUniverse")
+- Regular speech stays lowercase even if it matches vocabulary (e.g. "I love this" — not the concept "Love")
+- NEVER insert vocabulary casing inside another word ("wanna" stays "wanna", not "wAnna")
+- Do NOT repeat context. Do NOT add unspoken words.
+- Output ONLY the refined segment."""
 
     try:
         async with aiohttp.ClientSession() as session:
