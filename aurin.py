@@ -1408,24 +1408,23 @@ async def _ollama_gatekeeper(
     context_lines = "\n".join(f"  - {line}" for line in recent_context[-3:]) if recent_context else "  (none)"
     vocab_str = ", ".join(vocab_list) if vocab_list else "(none)"
 
-    prompt = f"""You are a transcript refinement assistant. You receive two transcriptions of the same audio:
-- Moonshine (fast, primary): {moonshine_text}
-- Whisper (vocabulary-primed): {whisper_text}
+    prompt = f"""Refine this transcript segment. You receive two transcriptions of the SAME audio clip:
+A: {moonshine_text}
+B: {whisper_text}
 
-Known vocabulary (exact names of projects and concepts the speaker uses, ordered by relevance): {vocab_str}
+Vocabulary (project/concept names, exact casing): {vocab_str}
 
-Recent confirmed sentences:
+Context (previous sentences, for reference only — do NOT repeat them):
 {context_lines}
 
-Produce the best refined transcript. Rules:
-1. Use Moonshine as base, apply vocabulary corrections from Whisper where phonetically plausible
-2. Fix punctuation and capitalization
-3. When a spoken word matches a vocabulary term, use its EXACT casing from the list above (e.g. "dream notes" → "DreamNodes", "attraxia" → "ATARAXIA", "interbrain" → "InterBrain")
-4. When a word happens to match a vocabulary term but is just regular speech, keep it lowercase (e.g. "I love this feature" stays lowercase even if "Love" is in the vocabulary — the speaker is not invoking the concept)
-5. When two vocabulary terms sound similar, prefer the one earlier in the list
-6. Do NOT add vocabulary terms that were not spoken — only correct terms that sound like they were intended
-
-Respond with ONLY the refined transcript text, nothing else. No JSON, no explanation, no quotes around the text."""
+Output ONLY the refined version of this segment. Rules:
+- Use A as base, apply corrections from B where phonetically plausible
+- Fix punctuation and capitalization
+- When a word SOUNDS like a vocabulary term, use its EXACT casing (e.g. "attraxia" → "ATARAXIA", "dream notes" → "DreamNodes")
+- When a word matches vocabulary but is regular speech, keep lowercase (e.g. "I love this" — not invoking the concept "Love")
+- Do NOT repeat or include any text from the context sentences above
+- Do NOT add vocabulary terms that were not spoken
+- Output ONLY the refined segment, nothing else"""
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -1461,13 +1460,14 @@ Respond with ONLY the refined transcript text, nothing else. No JSON, no explana
         # Detect vocab hits via case-sensitive matching on the refined text.
         # A vocab term is a "hit" only if it appears with its EXACT casing —
         # the LLM's job was to use exact casing for intentional invocations.
+        # Use word-boundary regex to avoid partial matches (e.g. "wAnna" != "Anna")
         vocab_hits = []
         for term in vocab_list:
             if len(term) < 3:
                 continue
-            # Use word-boundary-aware search to avoid partial matches
-            # For multi-word or CamelCase terms, just check substring
-            if term in refined:
+            # Escape regex special chars in term, match with word boundaries
+            pattern = r'(?<![a-zA-Z])' + re.escape(term) + r'(?![a-zA-Z])'
+            if re.search(pattern, refined):
                 vocab_hits.append(term)
 
         plog(f"[Gatekeeper] Refined: {refined[:80]}...")
