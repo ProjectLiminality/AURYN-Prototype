@@ -1947,6 +1947,11 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
     # Store Moonshine text per chunk for gatekeeper comparison
     moonshine_chunks: list[dict] = []  # [{index, text, start_sec, end_sec}]
     whisper_last_sec = 0.0  # audio seconds already processed by Whisper
+    # Running Moonshine transcript — words accumulate here, gatekeeper corrects in-place
+    # Each entry tracks: original word, chunk_index it came from, whether it's been refined
+    moonshine_words: list[dict] = []  # [{word, chunk_index, refined}]
+    # History of refined chunks for gatekeeper context (last N refined outputs)
+    refined_history: list[str] = []
 
     def _moonshine_transcribe_sync(wav_path: str) -> str:
         """Synchronous Moonshine transcription (non-streaming). Called from executor."""
@@ -1993,6 +1998,14 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                         "end_sec": total_sec,
                     })
 
+                    # Append words to running transcript for alignment
+                    for word in new_text.split():
+                        moonshine_words.append({
+                            "word": word,
+                            "chunk_index": chunk_idx,
+                            "refined": False,
+                        })
+
                     # Send immediately — this is the fast path
                     chunk_text = " " + new_text if transcript_parts else new_text
                     await ws.send_json({
@@ -2018,11 +2031,16 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
     async def periodic_whisper_and_gatekeeper():
         """Stage 2+3: Whisper vocabulary oracle + Ollama gatekeeper refinement.
 
-        Whisper runs vocab-primed on the same audio window as Moonshine.
-        Its output feeds the gatekeeper along with Moonshine's output.
-        The gatekeeper produces refined text; vocab hits are detected via
-        case-sensitive matching on the refined text. DreamNode invocations
-        only happen here — Moonshine and Whisper never notify directly.
+        Architecture:
+        1. Whisper transcribes the latest audio window (vocab-primed)
+        2. Fuzzy alignment finds the corresponding Moonshine segment
+        3. Gatekeeper receives aligned pair + vocab + context → refined text
+        4. Refined text splices into the Moonshine transcript in-place
+        5. Vocab hits detected via case-sensitive regex on refined text
+
+        The Moonshine transcript is the living document. Each gatekeeper pass
+        corrects a segment of it. Previously refined segments provide context
+        for future passes, accumulating quality forward.
         """
         nonlocal last_processed_bytes, last_transcribed_sec, whisper_last_sec
         while True:
@@ -2052,7 +2070,11 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
             try:
                 # Stage 2: Whisper with vocab-primed prompt
                 prompt = vocab_prompt
-                if transcript_parts:
+                if refined_history:
+                    # Use last refined output as Whisper context (better than raw Moonshine)
+                    recent = refined_history[-1]
+                    prompt = vocab_prompt + ". " + recent if vocab_prompt else recent
+                elif transcript_parts:
                     recent = transcript_parts[-1]
                     prompt = vocab_prompt + ". " + recent if vocab_prompt else recent
 
@@ -2079,26 +2101,24 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 whisper_text = await _process_new_text(whisper_text, notify_hits=False)
                 await _send_vocab_state()
 
-                # Collect Moonshine chunks from this window
-                moon_texts = [
-                    mc["text"] for mc in moonshine_chunks
-                    if mc["end_sec"] > window_start and mc["start_sec"] < total_sec
-                ]
-                chunk_indices = [
-                    mc["index"] for mc in moonshine_chunks
-                    if mc["end_sec"] > window_start and mc["start_sec"] < total_sec
-                ]
+                # --- Fuzzy alignment: find the Moonshine segment matching this Whisper chunk ---
+                # Build the unrefined portion of the Moonshine transcript
+                unrefined_words = [mw for mw in moonshine_words if not mw["refined"]]
+                if not unrefined_words:
+                    continue
 
-                if not moon_texts:
-                    continue  # No Moonshine output for this window
+                unrefined_text = " ".join(mw["word"] for mw in unrefined_words)
+                aligned_moon, align_start, align_end = _align_whisper_to_moonshine(
+                    whisper_text, unrefined_text
+                )
 
-                moon_combined = " ".join(moon_texts)
+                # Identify which chunk_indices are covered by the aligned segment
+                aligned_word_entries = unrefined_words[align_start:align_end]
+                chunk_indices = sorted(set(mw["chunk_index"] for mw in aligned_word_entries))
 
-                # Remove processed chunks so they're never re-selected
-                processed = set(chunk_indices)
-                moonshine_chunks[:] = [
-                    mc for mc in moonshine_chunks if mc["index"] not in processed
-                ]
+                plog(f"[Alignment] Whisper ({len(whisper_text.split())}w) aligned to Moonshine ({align_end - align_start}w of {len(unrefined_words)}w unrefined)")
+                plog(f"[Gatekeeper] Input A (Moonshine, chunks {chunk_indices}): {aligned_moon[:120]}...")
+                plog(f"[Gatekeeper] Input B (Whisper): {whisper_text[:120]}...")
 
                 # Stage 3: Gatekeeper — build full vocab list
                 seen_vocab = set()
@@ -2116,22 +2136,31 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                             seen_vocab.add(name.lower())
                             all_vocab.append(name)
 
-                plog(f"[Gatekeeper] Input A (Moonshine, chunks {chunk_indices}): {moon_combined[:120]}...")
-                plog(f"[Gatekeeper] Input B (Whisper): {whisper_text[:120]}...")
+                # Context: last 2 refined outputs (already corrected, high quality)
+                context_for_gatekeeper = list(refined_history[-2:])
 
                 gatekeeper_result = await _ollama_gatekeeper(
-                    moon_combined, whisper_text, all_vocab, list(sliding_window[-3:])
+                    aligned_moon, whisper_text, all_vocab, context_for_gatekeeper
                 )
 
                 if gatekeeper_result and gatekeeper_result["text"].strip():
                     refined = gatekeeper_result["text"].strip()
 
+                    # Mark aligned words as refined in moonshine_words
+                    for mw in aligned_word_entries:
+                        mw["refined"] = True
+
+                    # Add to refined history for future context
+                    refined_history.append(refined)
+                    if len(refined_history) > 5:
+                        refined_history.pop(0)
+
                     # Send correction to UI if text changed
-                    if refined != moon_combined:
+                    if refined != aligned_moon:
                         await ws.send_json({
                             "type": "transcript_correction",
                             "original_indices": chunk_indices,
-                            "original_text": moon_combined,
+                            "original_text": aligned_moon,
                             "refined_text": refined,
                             "stage": "gatekeeper",
                         })
@@ -2177,6 +2206,8 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 whisper_last_sec = 0.0
                 moonshine_chunk_index = 0
                 moonshine_chunks.clear()
+                moonshine_words.clear()
+                refined_history.clear()
                 pinned_vocab.clear()
                 ephemeral_vocab.clear()
                 sliding_window.clear()
