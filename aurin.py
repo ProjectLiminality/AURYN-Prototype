@@ -1383,6 +1383,70 @@ def _get_moonshine():
         return None
 
 
+# --- Fuzzy Alignment (pre-LLM) ---
+
+def _align_whisper_to_moonshine(whisper_text: str, moonshine_text: str) -> tuple[str, int, int]:
+    """Algorithmically align Whisper output to the corresponding Moonshine segment.
+
+    Takes the Whisper chunk and finds the best-matching subsequence in the
+    Moonshine transcript. Returns (aligned_moonshine_segment, start_word_idx, end_word_idx).
+
+    The algorithm:
+    1. Tokenize both into words (lowered for comparison)
+    2. Use a sliding window over Moonshine words (window size = Whisper word count ± 30%)
+    3. Score each window position by word overlap ratio
+    4. Return the best-matching window as the aligned Moonshine segment
+
+    This ensures the gatekeeper receives two versions of the SAME speech segment,
+    making its refinement task trivial.
+    """
+    w_words = whisper_text.split()
+    m_words = moonshine_text.split()
+
+    if not w_words or not m_words:
+        return moonshine_text, 0, len(m_words)
+
+    # If Moonshine is shorter or roughly same length as Whisper, use it all
+    if len(m_words) <= len(w_words) + 3:
+        return moonshine_text, 0, len(m_words)
+
+    w_lower = [w.lower().strip(".,!?;:'\"") for w in w_words]
+    m_lower = [w.lower().strip(".,!?;:'\"") for w in m_words]
+
+    # Build a set of Whisper words for fast lookup
+    w_set = set(w_lower)
+
+    # Try window sizes from 80% to 120% of Whisper word count
+    best_score = -1.0
+    best_start = 0
+    best_end = len(m_words)
+
+    min_win = max(1, int(len(w_words) * 0.7))
+    max_win = min(len(m_words), int(len(w_words) * 1.4)) + 1
+
+    for win_size in range(min_win, max_win):
+        for start in range(0, len(m_words) - win_size + 1):
+            window = m_lower[start:start + win_size]
+            # Score: fraction of window words that appear in Whisper
+            overlap = sum(1 for w in window if w in w_set)
+            # Bonus for matching first/last words (anchoring)
+            anchor_bonus = 0.0
+            if window[0] == w_lower[0]:
+                anchor_bonus += 0.15
+            if window[-1] == w_lower[-1]:
+                anchor_bonus += 0.15
+            # Penalize size mismatch slightly
+            size_penalty = abs(win_size - len(w_words)) / max(len(w_words), 1) * 0.1
+            score = (overlap / win_size) + anchor_bonus - size_penalty
+            if score > best_score:
+                best_score = score
+                best_start = start
+                best_end = start + win_size
+
+    aligned = " ".join(m_words[best_start:best_end])
+    return aligned, best_start, best_end
+
+
 # --- Ollama LLM Gatekeeper (Stage 3) ---
 _OLLAMA_GATEKEEPER_MODEL = "qwen2.5:3b"
 
@@ -1420,8 +1484,9 @@ Context (previous sentences, for reference only — do NOT repeat them):
 Output ONLY the refined version of this segment. Rules:
 - Use A as base, apply corrections from B where phonetically plausible
 - Fix punctuation and capitalization
-- When a word SOUNDS like a vocabulary term, use its EXACT casing (e.g. "attraxia" → "ATARAXIA", "dream notes" → "DreamNodes")
+- When a word SOUNDS like a vocabulary term, REPLACE the entire word with the vocabulary spelling (e.g. "attraxia" → "ATARAXIA", "dream notes" → "DreamNodes", "holo fractal" → "HolofractalUniverse")
 - When a word matches vocabulary but is regular speech, keep lowercase (e.g. "I love this" — not invoking the concept "Love")
+- NEVER insert vocabulary casing inside another word (e.g. "wanna" must stay "wanna", not "wAnna")
 - Do NOT repeat or include any text from the context sentences above
 - Do NOT add vocabulary terms that were not spoken
 - Output ONLY the refined segment, nothing else"""
@@ -1512,8 +1577,8 @@ _MLX_WHISPER_MODELS = {
     "large": "mlx-community/whisper-large-v3-mlx",
     "turbo": "mlx-community/whisper-large-v3-turbo",
 }
-_whisper_model_size = "base"
-_whisper_repo: str = _MLX_WHISPER_MODELS["base"]
+_whisper_model_size = "medium"
+_whisper_repo: str = _MLX_WHISPER_MODELS["medium"]
 def _transcribe_sync(wav_path: str, prompt: str = "") -> dict:
     """Synchronous Whisper transcription. Called from run_in_executor."""
     import mlx_whisper
@@ -2050,6 +2115,9 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                         if name and name.lower() not in seen_vocab and len(name) >= 3:
                             seen_vocab.add(name.lower())
                             all_vocab.append(name)
+
+                plog(f"[Gatekeeper] Input A (Moonshine, chunks {chunk_indices}): {moon_combined[:120]}...")
+                plog(f"[Gatekeeper] Input B (Whisper): {whisper_text[:120]}...")
 
                 gatekeeper_result = await _ollama_gatekeeper(
                     moon_combined, whisper_text, all_vocab, list(sliding_window[-3:])
