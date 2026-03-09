@@ -1942,8 +1942,6 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
     moonshine_last_sec = 0.0  # audio seconds already processed by Moonshine
     # Track Moonshine chunks by index for retroactive correction
     moonshine_chunk_index = 0  # incremented for each Moonshine chunk sent to UI
-    # Store Moonshine text per chunk for gatekeeper comparison
-    moonshine_chunks: list[dict] = []  # [{index, text, start_sec, end_sec}]
     whisper_last_sec = 0.0  # audio seconds already processed by Whisper
     # Running Moonshine transcript — words accumulate here, gatekeeper corrects in-place
     # Each entry tracks: original word, chunk_index it came from, whether it's been refined
@@ -1989,13 +1987,6 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 if new_text:
                     chunk_idx = moonshine_chunk_index
                     moonshine_chunk_index += 1
-                    moonshine_chunks.append({
-                        "index": chunk_idx,
-                        "text": new_text,
-                        "start_sec": moonshine_last_sec,
-                        "end_sec": total_sec,
-                    })
-
                     # Append words to running transcript for alignment
                     for word in new_text.split():
                         moonshine_words.append({
@@ -2210,7 +2201,6 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 moonshine_last_sec = 0.0
                 whisper_last_sec = 0.0
                 moonshine_chunk_index = 0
-                moonshine_chunks.clear()
                 moonshine_words.clear()
                 refined_history.clear()
                 pinned_vocab.clear()
