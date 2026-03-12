@@ -1919,23 +1919,10 @@ function connectTranscriptionWs() {
           stopRecordingResolve = null;
         }
       } else if (data.type === 'transcript_correction') {
-        // Stage 3: Gatekeeper refined the Moonshine output
-        // Simple text-based find-and-replace on the input field
-        const findText = data.find_text;
-        const replaceText = data.replace_text;
-        if (findText && replaceText) {
-          const currentVal = inputEl.value;
-          const idx = currentVal.indexOf(findText);
-          if (idx !== -1) {
-            inputEl.value = currentVal.substring(0, idx) + replaceText + currentVal.substring(idx + findText.length);
-            inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length;
-            inputEl.style.height = 'auto';
-            inputEl.style.height = inputEl.scrollHeight + 'px';
-            console.log('[Gatekeeper] Correction applied:', replaceText.substring(0, 80) + '...');
-          } else {
-            console.log('[Gatekeeper] Find text not found in input:', findText.substring(0, 60));
-          }
-        }
+        // Stage 3: Gatekeeper corrections logged but not applied to UI
+        // (corrections still saved to transcript file server-side)
+        // TODO: re-enable once text-replacement is reliable
+        console.log('[Gatekeeper] Correction received (not applied to UI):', (data.replace_text || '').substring(0, 80));
       } else if (data.type === 'vocab_update') {
         renderVocabDebug(data);
       } else if (data.type === 'session_started') {
