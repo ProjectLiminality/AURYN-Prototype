@@ -602,10 +602,20 @@ async def ws_inference(request: web.Request) -> web.WebSocketResponse:
                 model = options.get("model") or default_model
 
                 if model.startswith("claude-"):
-                    coro = _stream_claude(
-                        ws, request_id, messages, model,
-                        request.app.get("claude_api_key", ""),
-                    )
+                    api_key = request.app.get("claude_api_key", "")
+                    if api_key:
+                        coro = _stream_claude(
+                            ws, request_id, messages, model, api_key,
+                        )
+                    elif _find_claude_binary():
+                        # No API key but claude CLI available — use Claude Max
+                        coro = _stream_claude_cli(
+                            ws, request_id, messages, model,
+                        )
+                    else:
+                        coro = _stream_claude(
+                            ws, request_id, messages, model, "",
+                        )  # Will emit the "no API key" error
                 else:
                     coro = _stream_ollama(ws, request_id, messages, model, ollama_url)
 
@@ -1590,6 +1600,255 @@ async def _stream_claude(
                 "type": "ai-inference-stream-error",
                 "requestId": request_id,
                 "error": str(e),
+                "partialContent": partial_content or None,
+            })
+        except ConnectionResetError:
+            pass
+
+
+# ============================================================
+# Claude CLI Backend — uses `claude -p` via Claude Max subscription
+# instead of direct API calls. No per-token cost.
+# ============================================================
+
+# Sandbox directory to prevent claude CLI from loading CLAUDE.md files
+# and MCP configs from the project tree (~50K token overhead → ~5K)
+_CLI_SANDBOX = Path("/tmp/auryn-inference-sandbox")
+
+
+def _find_claude_binary() -> str | None:
+    """Find the claude CLI binary, checking common locations."""
+    found = shutil.which("claude")
+    if found:
+        return found
+    for candidate in [
+        "/usr/local/bin/claude",
+        str(Path.home() / ".claude" / "local" / "claude"),
+    ]:
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def _ensure_cli_sandbox() -> Path:
+    """Create a minimal sandbox directory to isolate claude CLI from project context.
+
+    Puts a .git/HEAD file to stop CLAUDE.md traversal up the directory tree.
+    This drops the overhead from ~50K tokens to ~5K tokens.
+    """
+    _CLI_SANDBOX.mkdir(parents=True, exist_ok=True)
+    git_dir = _CLI_SANDBOX / ".git"
+    git_dir.mkdir(exist_ok=True)
+    head_file = git_dir / "HEAD"
+    if not head_file.exists():
+        head_file.write_text("ref: refs/heads/main\n")
+    return _CLI_SANDBOX
+
+
+def _format_messages_as_prompt(messages: list[dict]) -> str:
+    """Format conversation history into a single prompt string for claude -p.
+
+    The claude CLI takes a single prompt via stdin. We format the message
+    history as a structured conversation so the model has full context.
+    """
+    parts = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if role == "system":
+            continue  # system prompt passed separately via --system-prompt
+        elif role == "assistant":
+            parts.append(f"[assistant]\n{content}")
+        else:
+            parts.append(f"[user]\n{content}")
+    return "\n\n".join(parts)
+
+
+async def _stream_claude_cli(
+    ws: web.WebSocketResponse,
+    request_id: str,
+    messages: list[dict],
+    model: str,
+) -> None:
+    """Stream inference from Claude CLI (`claude -p`) and relay over WebSocket.
+
+    Uses the Claude Max subscription via the CLI binary instead of direct
+    API calls. No per-token cost.
+
+    Limitations:
+    - No tool calling support (search_dreamnodes, edit_readme, etc.).
+      The CLI subprocess runs in an isolated sandbox without AURYN tools.
+      Tool calling can be added later by including tool descriptions in the
+      system prompt and parsing the CLI output for tool use blocks.
+    - Text arrives as a single burst per assistant turn (not token-by-token),
+      because `claude -p --output-format stream-json` emits complete text
+      in one JSON line. We chunk it into ~80-char pieces for smoother UI
+      rendering.
+    """
+    claude_bin = _find_claude_binary()
+    if not claude_bin:
+        await ws.send_json({
+            "type": "ai-inference-stream-error",
+            "requestId": request_id,
+            "error": "Claude CLI binary not found. Install Claude Code or set it on PATH.",
+        })
+        return
+
+    sandbox = _ensure_cli_sandbox()
+
+    # Extract system prompt from messages
+    system_prompt = ""
+    for m in messages:
+        if m.get("role") == "system":
+            system_prompt = m.get("content", "")
+            break
+
+    # Format conversation history into a single prompt
+    prompt_text = _format_messages_as_prompt(messages)
+    if not prompt_text.strip():
+        prompt_text = "(empty message)"
+
+    # Build command
+    cmd = [claude_bin, "-p", "--output-format", "stream-json", "--verbose", "--max-turns", "1"]
+    if system_prompt:
+        cmd.extend(["--system-prompt", system_prompt])
+
+    env = os.environ.copy()
+    env.pop("CLAUDECODE", None)  # Allow nested sessions
+
+    partial_content = ""
+    proc = None
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(sandbox),
+            env=env,
+        )
+
+        # Send prompt via stdin and close
+        proc.stdin.write(prompt_text.encode("utf-8"))
+        await proc.stdin.drain()
+        proc.stdin.close()
+
+        # Read stdout line by line — each line is a JSON event
+        buffer = b""
+        usage_info = {}
+
+        async def read_with_timeout():
+            return await asyncio.wait_for(proc.stdout.read(4096), timeout=120)
+
+        while True:
+            try:
+                chunk = await read_with_timeout()
+            except asyncio.TimeoutError:
+                await ws.send_json({
+                    "type": "ai-inference-stream-error",
+                    "requestId": request_id,
+                    "error": "Claude CLI timed out after 120 seconds.",
+                    "partialContent": partial_content or None,
+                })
+                return
+            if not chunk:
+                break
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+
+                etype = event.get("type")
+
+                if etype == "assistant":
+                    # Extract text from assistant message content blocks
+                    msg = event.get("message", {})
+                    content_blocks = msg.get("content", [])
+                    for block in content_blocks:
+                        if block.get("type") == "text":
+                            text = block.get("text", "")
+                            if text:
+                                partial_content += text
+                                # Send in chunks for smoother UI rendering
+                                chunk_size = 80
+                                for i in range(0, len(text), chunk_size):
+                                    await ws.send_json({
+                                        "type": "ai-inference-stream-chunk",
+                                        "requestId": request_id,
+                                        "chunk": text[i:i + chunk_size],
+                                    })
+
+                elif etype == "result":
+                    # Extract usage from result event
+                    result_usage = event.get("usage", {})
+                    usage_info = {
+                        "promptTokens": result_usage.get("input_tokens", 0)
+                            + result_usage.get("cache_read_input_tokens", 0)
+                            + result_usage.get("cache_creation_input_tokens", 0),
+                        "completionTokens": result_usage.get("output_tokens", 0),
+                    }
+                    if event.get("is_error"):
+                        error_msg = event.get("result", "Unknown CLI error")
+                        await ws.send_json({
+                            "type": "ai-inference-stream-error",
+                            "requestId": request_id,
+                            "error": error_msg,
+                            "partialContent": partial_content or None,
+                        })
+                        return
+
+        # Process remaining buffer
+        if buffer.strip():
+            try:
+                event = json.loads(buffer.decode("utf-8", errors="replace"))
+                if event.get("type") == "assistant":
+                    msg = event.get("message", {})
+                    for block in msg.get("content", []):
+                        if block.get("type") == "text":
+                            text = block.get("text", "")
+                            if text:
+                                partial_content += text
+                                await ws.send_json({
+                                    "type": "ai-inference-stream-chunk",
+                                    "requestId": request_id,
+                                    "chunk": text,
+                                })
+            except json.JSONDecodeError:
+                pass
+
+        await proc.wait()
+
+        await ws.send_json({
+            "type": "ai-inference-stream-done",
+            "requestId": request_id,
+            "provider": "claude-cli",
+            "model": model,
+            "usage": usage_info,
+        })
+
+    except asyncio.CancelledError:
+        if proc and proc.returncode is None:
+            try:
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), timeout=3)
+            except (ProcessLookupError, asyncio.TimeoutError):
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+    except Exception as e:
+        try:
+            await ws.send_json({
+                "type": "ai-inference-stream-error",
+                "requestId": request_id,
+                "error": f"Claude CLI error: {e}",
                 "partialContent": partial_content or None,
             })
         except ConnectionResetError:
@@ -3590,11 +3849,15 @@ async def serve(args: argparse.Namespace) -> None:
 
     ollama_models = get_ollama_models(args.ollama_url)
     claude_models = []
+    claude_cli_bin = _find_claude_binary()
     if claude_api_key:
         claude_models = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
-        print(f"  Claude:    {len(claude_models)} models available")
+        print(f"  Claude:    {len(claude_models)} models available (API)")
+    elif claude_cli_bin:
+        claude_models = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+        print(f"  Claude:    {len(claude_models)} models available (CLI fallback: {claude_cli_bin})")
     else:
-        print("  Claude:    No API key found")
+        print("  Claude:    No API key or CLI found")
     all_models = []
     if args.model not in ollama_models and args.model not in claude_models:
         all_models.append(args.model)
