@@ -848,6 +848,37 @@ AURYN_TOOLS = [
             "required": ["file_path"],
         },
     },
+    {
+        "name": "audit_garden",
+        "description": (
+            "Scan the knowledge garden for DreamNodes that need attention. Returns a list of "
+            "DreamNodes with boilerplate/empty READMEs that could benefit from an interview — "
+            "where you ask the user to describe what the concept is, then populate the README. "
+            "Use this to start a knowledge gardening session. You can optionally filter by keyword. "
+            "After receiving results, walk through them with the user one by one: ask what each "
+            "DreamNode is, offer to populate the README, delete the node, or skip."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filter": {
+                    "type": "string",
+                    "description": "Optional keyword filter — only return DreamNodes whose title contains this string (case-insensitive).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (default 20).",
+                    "default": 20,
+                },
+                "include_shallow": {
+                    "type": "boolean",
+                    "description": "Also include READMEs with content but fewer than 5 lines (shallow but not empty). Default false.",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -931,6 +962,90 @@ def _execute_create_dreamnode(title: str, readme_content: str = "", node_type: s
             "type": node_type,
             "path": str(node_path),
             "folder": folder_name,
+        })
+
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _execute_audit_garden(
+    filter_keyword: str = "", limit: int = 20, include_shallow: bool = False
+) -> str:
+    """Scan the vault for DreamNodes with boilerplate or missing READMEs.
+
+    Returns a JSON list of DreamNodes that need attention, sorted by title.
+    Boilerplate = README is empty, missing, or contains only a heading (<=2 lines).
+    Shallow = README has some content but fewer than 5 lines.
+    """
+    try:
+        results = []
+        for udd_path in sorted(VAULT_DIR.glob("*/.udd")):
+            node_dir = udd_path.parent
+            # Skip AURYN itself and hidden dirs
+            if node_dir.name.startswith("."):
+                continue
+
+            try:
+                udd = json.loads(udd_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            title = udd.get("title", node_dir.name)
+            node_id = udd.get("id", udd.get("uuid", ""))
+
+            # Apply keyword filter
+            if filter_keyword and filter_keyword.lower() not in title.lower():
+                continue
+
+            readme_path = node_dir / "README.md"
+            if not readme_path.exists():
+                status = "missing"
+                line_count = 0
+                content_preview = ""
+            else:
+                content = readme_path.read_text(encoding="utf-8").strip()
+                lines = [l for l in content.split("\n") if l.strip()]
+                line_count = len(lines)
+
+                if line_count <= 2:
+                    # Check if it's truly boilerplate (just a heading)
+                    status = "boilerplate"
+                    content_preview = content[:100]
+                elif include_shallow and line_count < 5:
+                    status = "shallow"
+                    content_preview = content[:200]
+                else:
+                    continue  # Has real content, skip
+
+            results.append({
+                "title": title,
+                "id": node_id,
+                "path": str(node_dir),
+                "status": status,
+                "lines": line_count,
+                "preview": content_preview,
+            })
+
+            if len(results) >= limit:
+                break
+
+        # Count totals for context
+        total_nodes = len(list(VAULT_DIR.glob("*/.udd")))
+        total_boilerplate = 0
+        for udd_path in VAULT_DIR.glob("*/.udd"):
+            readme = udd_path.parent / "README.md"
+            if not readme.exists():
+                total_boilerplate += 1
+            else:
+                lines = [l for l in readme.read_text(encoding="utf-8").strip().split("\n") if l.strip()]
+                if len(lines) <= 2:
+                    total_boilerplate += 1
+
+        return json.dumps({
+            "nodes": results,
+            "returned": len(results),
+            "total_needing_attention": total_boilerplate,
+            "total_nodes": total_nodes,
         })
 
     except Exception as e:
@@ -1229,6 +1344,12 @@ async def _dispatch_tool(
             title=tool_input.get("title", ""),
             readme_content=tool_input.get("readme_content", ""),
             node_type=tool_input.get("type", "dream"),
+        )
+    elif tool_name == "audit_garden":
+        return _execute_audit_garden(
+            filter_keyword=tool_input.get("filter", ""),
+            limit=tool_input.get("limit", 20),
+            include_shallow=tool_input.get("include_shallow", False),
         )
     elif tool_name == "search_dreamnodes":
         return _execute_search_dreamnodes(
