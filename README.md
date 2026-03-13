@@ -480,6 +480,18 @@ AURYN is a knowledge topology. No agentic framework is building this — they do
 
 The knowledge gardening layer is deeply human, inherently social, and resistant to pure automation. Someone with well-structured DreamNodes and rich DreamSongs gets dramatically better results from *any* agentic framework than someone with a flat folder of markdown files. AURYN is what makes every tool more effective.
 
+### Vision, Strategy, Culture — The CI Triple
+
+Collective intelligence has three modalities that map onto the vertical and horizontal axes of the system:
+
+- **Vision (vertical, feminine)**: Knowing what wants to emerge. Lives in dialogue — authentic co-visioning happens between humans in conversation. This is where collective intelligence is most irreducibly human.
+- **Strategy (horizontal, masculine)**: Implementing what has been envisioned. In the agentic age, this is increasingly AI territory. Cherry-pick commits are fundamentally prompts — the AI understands intent and realizes it in context.
+- **Culture (the fulcrum)**: Where vision and strategy intersect. The imminent modality. Culture is what pulls vision into form and hands it to strategy for realization. It is distributed, not centrally controlled, and evolves through resonance.
+
+The practical implication: AURYN does not need humans in the loop for implementation (strategy axis). It needs humans in the loop for vision — when a change would alter what a DreamNode fundamentally *is* and *means*. The daily brief is the rhythm at which culture operates: slow enough for depth, frequent enough to stay alive.
+
+An agent swarm is not collective intelligence. It is distributed artificial intelligence. Collective intelligence requires the human cultural layer at the fulcrum — the place where meaning is made, not just computed.
+
 ### Memory Taxonomy in DreamOS
 
 DreamOS operates across three distinct temporal layers of memory — each with its own substrate, granularity, and purpose:
