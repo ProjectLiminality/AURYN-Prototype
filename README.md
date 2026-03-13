@@ -449,6 +449,27 @@ Add to `~/.claude/mcp.json`:
 
 Requires Ollama with `nomic-embed-text` for semantic search (optional — fuzzy search works without it).
 
+## Rhythm of Synchronization
+
+The missing piece that turns collective gardening from functional into magical. Not what to sync or how — but *when*, and at what frequency.
+
+The current model (check for updates on demand) is pull-based and human-initiated. The vision is a periodic audit that AURYN runs autonomously, managing both axes:
+
+- **Listening**: Fetch peer commits, filter by escalation boundary, surface only visionary-axis changes in the brief
+- **Speaking**: Scan local changes since last push, identify what has crystallized into a meaningful shareable unit, invite the human to broadcast it — or do so autonomously if the pattern is clear
+
+**The periodic brief** is the primary human interface for this. Not real-time notifications (asynchronous communication should not produce synchronous interruptions — that is a bug, not a feature; synchronous need means a phone call). The brief is dispatched on a humane rhythm: daily at minimum, weekly for higher-level synthesis. Frequencies beyond that should align to natural cycles where possible.
+
+**The guiding principle**: slow is fast, less is more. The InterBrain is about depth and growing deep roots, not velocity. Real-time signal flow is valuable only in service to the slow, deep-rooted gradual process — never as an end in itself.
+
+**What the brief surfaces**:
+- What has crystallized locally and is ready to share with peers
+- What peer changes are waiting that touch the vision axis
+- What DreamNodes are approaching harvest maturity — and what single question remains
+- What submodule instances have drifted from sovereign and need holarchic sync
+
+The brief is also where AURYN's role as orchestrator becomes most visible: it has already done the work of filtering, squashing, and routing — the human receives a distilled signal, not raw noise.
+
 ## Philosophy
 
 ### The Universal Principle
