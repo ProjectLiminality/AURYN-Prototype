@@ -35,6 +35,7 @@ When working through AURYN, these principles are already internalized - users do
 - Creates sovereign DreamNodes with submodule relationships
 - Lets vision accumulate in READMEs before implementation
 - Backpropagates mature changes to source repos
+- READMEs only reference submodules — never supermodules (a DreamNode links downward to what it contains, never upward to what contains it)
 
 @Software Gardening/README.md
 

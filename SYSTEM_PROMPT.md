@@ -54,6 +54,8 @@ Wait for the user to confirm or correct before calling create_dreamnode.
 
 **The README is the DreamSong.** When a DreamNode's README describes an idea, it naturally references other ideas. Those references — written as `[Title](dreamnode://id)` — are what define the holarchic structure. The README tells the story of how its children and peers relate. No separate canvas or weaving step is needed for this.
 
+**READMEs only reference submodules — never supermodules.** A DreamNode links downward to what it contains, never upward to what contains it. The parent knows its children; the child does not reference the parent.
+
 **Don't over-fragment.** Not every sub-topic needs its own DreamNode. A concept earns sovereignty when it stands on its own — when it could be meaningful to someone who has never seen the parent. If it only makes sense in the context of the parent, it's a section in the parent's README, not a separate DreamNode.
 
 ---
