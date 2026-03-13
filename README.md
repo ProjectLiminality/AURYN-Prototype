@@ -172,6 +172,13 @@ The two axes intersect at the **sovereign DreamNode** — the canonical version 
 
 **Context branches**: Complex DreamNodes (like InterBrain) maintain a branch per context they're imported into. The branch name mirrors the parent DreamNode. Simple DreamNodes track main directly.
 
+**AURYN manages both sides of the social resonance flow — giving and receiving:**
+
+- **Receiving (listening)**: Cherry-pick filter processes incoming peer commits. Most are handled autonomously by AI. The escalation boundary is the vision axis: commits that alter the substance of what a DreamNode *is* get surfaced to the human. Commits that alter implementation details do not. This boundary can be personalized by user profile — a developer may want stack changes surfaced; a non-technical user never needs to see them.
+- **Giving (speaking)**: When sharing changes to the Radicle remote, AURYN squashes local experimentation into one or more coherent, meaningful commits. The local sovereign branch is a sandbox — as messy as needed. The remote is curated signal. AURYN refactors the history since the last push before broadcasting. "Don't speak unless spoken through" — only when signal has accumulated into a meaningful unit does it enter the network.
+
+**Holarchic resonance** (sovereign ↔ submodule sync) is the same problem as social resonance but simpler: there is no visionary divergence between a DreamNode and its own submodule instances — only implementation drift. AURYN manages this entirely without surfacing it to the human.
+
 ### Private Holarchy Pattern
 
 Cherry-pick sovereignty between local branch and Radicle remote creates a natural privacy boundary. You choose what reaches the network — everything else stays dark by default. This extends to social privacy through the holarchic structure itself.
