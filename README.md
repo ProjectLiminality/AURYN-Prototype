@@ -285,6 +285,8 @@ AURYN can assess the state of any DreamNode that contains submodules (like a pro
 
 The README is the always-current truth. When AURYN does a situational assessment, it reads the README first. If the README is stale, that's the first thing to fix.
 
+**READMEs only reference submodules — never supermodules.** A DreamNode links downward to what it contains, never upward to what contains it. The parent knows its children; the child does not reference the parent.
+
 ## MCP Tools (35 total)
 
 ### DreamNode Operations (4)
