@@ -709,6 +709,39 @@ async def _stream_ollama(
 
 AURYN_TOOLS = [
     {
+        "name": "create_dreamnode",
+        "description": (
+            "Create a new DreamNode in the vault. Use this ONLY after proposing the creation "
+            "to the user and receiving confirmation. Provide a clear title and initial README "
+            "content. The README should use [Title](dreamnode://id) syntax to reference other "
+            "DreamNodes. Create children before parents so parent READMEs can reference them. "
+            "Returns the new DreamNode's id and path."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "The title for the new DreamNode. Will be converted to PascalCase for the folder name.",
+                },
+                "readme_content": {
+                    "type": "string",
+                    "description": (
+                        "Initial README.md content in markdown. Should define the concept clearly. "
+                        "Use [Name](dreamnode://id) to reference other DreamNodes."
+                    ),
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["dream", "dreamer"],
+                    "description": "Node type — 'dream' for concepts/projects, 'dreamer' for people (default: dream).",
+                    "default": "dream",
+                },
+            },
+            "required": ["title", "readme_content"],
+        },
+    },
+    {
         "name": "search_dreamnodes",
         "description": (
             "Search the DreamNode knowledge garden using BM25 + vocabulary matching. "
@@ -816,6 +849,92 @@ AURYN_TOOLS = [
         },
     },
 ]
+
+
+def _sanitize_to_pascal_case(name: str) -> str:
+    """Convert a title to PascalCase folder name. 'Race to the Top' -> 'RaceToTheTop'"""
+    # Split on spaces, hyphens, underscores
+    words = re.split(r"[\s\-_]+", name)
+    # Capitalize each word, join
+    return "".join(w.capitalize() for w in words if w)
+
+
+def _execute_create_dreamnode(title: str, readme_content: str = "", node_type: str = "dream") -> str:
+    """Create a new DreamNode with git init, .udd, and README.md.
+
+    Uses the new 'id' field (bare Radicle key, no rad: prefix) for new DreamNodes.
+    Returns JSON with id, title, path for immediate use in dreamnode:// links.
+    """
+    try:
+        folder_name = _sanitize_to_pascal_case(title)
+        node_path = VAULT_DIR / folder_name
+
+        if node_path.exists():
+            return json.dumps({"error": f"Directory already exists: {node_path}"})
+
+        # Generate UUID (will be replaced by Radicle ID once rad init runs)
+        node_id = str(uuid.uuid4())
+
+        # Create directory
+        node_path.mkdir(parents=True)
+
+        # Write .udd with new schema (id instead of uuid/radicleId)
+        udd = {
+            "id": node_id,
+            "title": title,
+            "type": node_type,
+            "dreamTalk": "",
+        }
+        (node_path / ".udd").write_text(json.dumps(udd, indent=2))
+
+        # Write README
+        if not readme_content:
+            readme_content = f"# {title}\n"
+        (node_path / "README.md").write_text(readme_content, encoding="utf-8")
+
+        # Git init + initial commit
+        subprocess.run(["git", "init"], cwd=str(node_path), capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=str(node_path), capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", f"Initialize DreamNode: {title}"],
+            cwd=str(node_path), capture_output=True,
+        )
+
+        # Try Radicle init (non-fatal if rad not available)
+        try:
+            result = subprocess.run(
+                ["rad", "init", "--name", folder_name, "--description", f"DreamNode: {title}",
+                 "--default-branch", "main", "--public"],
+                cwd=str(node_path), capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0:
+                # Extract RID from output
+                rid_match = re.search(r"(rad:[a-zA-Z0-9]+)", result.stdout + result.stderr)
+                if rid_match:
+                    rid = rid_match.group(1)
+                    # Update .udd with the bare key (strip rad: prefix)
+                    bare_key = rid.replace("rad:", "")
+                    udd["id"] = bare_key
+                    (node_path / ".udd").write_text(json.dumps(udd, indent=2))
+                    subprocess.run(["git", "add", ".udd"], cwd=str(node_path), capture_output=True)
+                    subprocess.run(
+                        ["git", "commit", "-m", "Set Radicle ID"],
+                        cwd=str(node_path), capture_output=True,
+                    )
+                    node_id = bare_key
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass  # Radicle not available, keep UUID as id
+
+        return json.dumps({
+            "id": node_id,
+            "title": title,
+            "type": node_type,
+            "path": str(node_path),
+            "folder": folder_name,
+        })
+
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 def _execute_reveal_file(file_path: str) -> str:
@@ -1105,7 +1224,13 @@ async def _dispatch_tool(
     request_id: str = "",
 ) -> str:
     """Dispatch a tool call and return the result as a string."""
-    if tool_name == "search_dreamnodes":
+    if tool_name == "create_dreamnode":
+        return _execute_create_dreamnode(
+            title=tool_input.get("title", ""),
+            readme_content=tool_input.get("readme_content", ""),
+            node_type=tool_input.get("type", "dream"),
+        )
+    elif tool_name == "search_dreamnodes":
         return _execute_search_dreamnodes(
             query=tool_input.get("query", ""),
             top_k=tool_input.get("top_k", 8),
