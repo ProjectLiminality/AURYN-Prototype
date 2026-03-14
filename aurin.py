@@ -782,6 +782,24 @@ AURYN_TOOLS = [
         },
     },
     {
+        "name": "read_dreamnode",
+        "description": (
+            "Read a DreamNode's README, metadata, and file listing. Use this for detective work — "
+            "examining a DreamNode's content without it being loaded as a petal. Accepts a title, "
+            "folder name, or absolute path. Returns the full README, .udd metadata, and file list."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "identifier": {
+                    "type": "string",
+                    "description": "DreamNode title, folder name, or absolute path.",
+                },
+            },
+            "required": ["identifier"],
+        },
+    },
+    {
         "name": "edit_readme",
         "description": (
             "Edit a DreamNode's README.md directly. Use this to route insights from conversation "
@@ -1178,6 +1196,89 @@ def _execute_edit_readme(
         return f"Error editing README: {e}"
 
 
+def _execute_read_dreamnode(identifier: str) -> str:
+    """Read a DreamNode's README and metadata by title, folder name, or path.
+
+    Returns the full README content, metadata from .udd, and a file listing.
+    This is the detective's magnifying glass — use it to examine any node.
+    """
+    try:
+        node_dir = None
+
+        # Try as absolute path first
+        if identifier.startswith("/"):
+            candidate = Path(identifier)
+            if candidate.is_dir() and (candidate / ".udd").exists():
+                node_dir = candidate
+
+        # Try as folder name in vault
+        if node_dir is None:
+            candidate = VAULT_DIR / identifier
+            if candidate.is_dir() and (candidate / ".udd").exists():
+                node_dir = candidate
+
+        # Try fuzzy match on title/folder
+        if node_dir is None:
+            identifier_lower = identifier.lower()
+            for udd_path in VAULT_DIR.glob("*/.udd"):
+                folder = udd_path.parent.name
+                if folder.lower() == identifier_lower:
+                    node_dir = udd_path.parent
+                    break
+                try:
+                    udd = json.loads(udd_path.read_text())
+                    if udd.get("title", "").lower() == identifier_lower:
+                        node_dir = udd_path.parent
+                        break
+                except (json.JSONDecodeError, OSError):
+                    continue
+
+        if node_dir is None:
+            return f"DreamNode not found: {identifier!r}. Try search_dreamnodes to find it."
+
+        # Read metadata
+        udd = {}
+        udd_path = node_dir / ".udd"
+        if udd_path.exists():
+            try:
+                udd = json.loads(udd_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Read README
+        readme_path = node_dir / "README.md"
+        readme = "(no README.md)"
+        if readme_path.exists():
+            readme = readme_path.read_text(encoding="utf-8")
+            if len(readme) > 5000:
+                readme = readme[:5000] + "\n\n[...truncated at 5000 chars...]"
+
+        # List files (excluding .git)
+        files = []
+        for f in sorted(node_dir.iterdir()):
+            if f.name.startswith("."):
+                continue
+            if f.is_dir():
+                files.append(f"{f.name}/")
+            else:
+                files.append(f.name)
+
+        title = udd.get("title", node_dir.name)
+        node_id = udd.get("id", udd.get("uuid", ""))
+        node_type = udd.get("type", "dream")
+
+        result = f"**{title}** ({node_type})\n"
+        result += f"ID: {node_id}\n"
+        result += f"Path: {node_dir}\n"
+        result += f"Files: {', '.join(files)}\n"
+        result += f"\n--- README ---\n{readme}"
+
+        return result
+
+    except Exception as e:
+        return f"Error reading DreamNode: {e}"
+
+
 def _execute_search_dreamnodes(query: str, top_k: int = 8, include_readme: bool = False) -> str:
     """Execute search_dreamnodes tool synchronously."""
     try:
@@ -1360,6 +1461,10 @@ async def _dispatch_tool(
             filter_keyword=tool_input.get("filter", ""),
             limit=tool_input.get("limit", 20),
             include_shallow=tool_input.get("include_shallow", False),
+        )
+    elif tool_name == "read_dreamnode":
+        return _execute_read_dreamnode(
+            identifier=tool_input.get("identifier", ""),
         )
     elif tool_name == "search_dreamnodes":
         return _execute_search_dreamnodes(

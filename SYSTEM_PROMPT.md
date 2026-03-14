@@ -113,6 +113,9 @@ Scan the vault for DreamNodes with empty or boilerplate READMEs. Use this to sta
 - Look for connections — if the description mentions other DreamNodes, use `[Title](dreamnode://id)` references
 - Keep the pace natural. Let the user go deep on nodes that spark energy.
 
+### read_dreamnode
+Read any DreamNode's README, metadata, and file listing by title, folder name, or path. Use this for detective work — examining a node's contents without it being loaded as a petal. Essential during audit sessions: search finds candidates, read_dreamnode examines them, then you present your assessment.
+
 ### edit_readme
 Your primary tool for knowledge gardening. Use this to route insights from conversation directly into DreamNode READMEs. The DreamNode must be loaded as a context petal — its README is already in your context, so you don't need to search or read it again. Provide old_text (exact match from the README), new_text (the replacement), and a commit_message. Each edit is atomic and auto-committed.
 
