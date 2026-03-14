@@ -815,7 +815,356 @@ AURYN_TOOLS = [
             "required": ["file_path"],
         },
     },
+    {
+        "name": "create_dreamnode",
+        "description": (
+            "Plant a new seed in the knowledge garden. Creates a DreamNode with git init, "
+            ".udd metadata, and initial README. Always propose to the user first and wait "
+            "for confirmation before calling this tool."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "The DreamNode title (e.g. 'Zero Point Energy').",
+                },
+                "readme_content": {
+                    "type": "string",
+                    "description": "Initial README.md content. If empty, a minimal template is used.",
+                    "default": "",
+                },
+                "node_type": {
+                    "type": "string",
+                    "description": "DreamNode type: 'dream' (default) or 'dreamer'.",
+                    "default": "dream",
+                },
+            },
+            "required": ["title"],
+        },
+    },
+    {
+        "name": "audit_garden",
+        "description": (
+            "Scan the vault for DreamNodes needing attention: boilerplate/empty READMEs, "
+            "missing or invalid .udd metadata, schema issues. Use this to start a knowledge "
+            "gardening interview session. After getting results, do detective work before "
+            "asking the user about each node."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "keyword": {
+                    "type": "string",
+                    "description": "Optional keyword filter — only return nodes whose title/folder contains this string.",
+                    "default": "",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max number of results to return (default 20).",
+                    "default": 20,
+                },
+                "include_shallow": {
+                    "type": "boolean",
+                    "description": "Also include READMEs with some content but fewer than 5 meaningful lines.",
+                    "default": False,
+                },
+                "check_metadata": {
+                    "type": "boolean",
+                    "description": "Also check for .udd schema issues (missing fields, bad IDs, etc.).",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "read_dreamnode",
+        "description": (
+            "Read a DreamNode's README, metadata, and file listing. Use this for detective work — "
+            "examining a DreamNode's content without it being loaded as a petal. Accepts a title, "
+            "folder name, or absolute path. Returns the full README, .udd metadata, and file list."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "identifier": {
+                    "type": "string",
+                    "description": "DreamNode title, folder name, or absolute path.",
+                },
+            },
+            "required": ["identifier"],
+        },
+    },
 ]
+
+
+def _sanitize_to_pascal_case(title: str) -> str:
+    """Convert a title to PascalCase folder name (e.g. 'Zero Point Energy' -> 'ZeroPointEnergy')."""
+    words = re.split(r"[\s\-_]+", title.strip())
+    return "".join(w.capitalize() for w in words if w)
+
+
+def _execute_create_dreamnode(title: str, readme_content: str = "", node_type: str = "dream") -> str:
+    """Create a new DreamNode with git init, .udd metadata, and initial README."""
+    try:
+        folder_name = _sanitize_to_pascal_case(title)
+        node_path = VAULT_DIR / folder_name
+
+        if node_path.exists():
+            return json.dumps({"error": f"Directory already exists: {node_path}"})
+
+        node_id = str(uuid.uuid4())
+        node_path.mkdir(parents=True)
+
+        # Write .udd
+        udd = {"id": node_id, "title": title, "type": node_type, "dreamTalk": ""}
+        (node_path / ".udd").write_text(json.dumps(udd, indent=2))
+
+        # Write README
+        if not readme_content:
+            readme_content = f"# {title}\n"
+        (node_path / "README.md").write_text(readme_content, encoding="utf-8")
+
+        # Git init and initial commit
+        subprocess.run(["git", "init"], cwd=node_path, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=node_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", f"Plant seed: {title}"],
+            cwd=node_path, capture_output=True,
+        )
+
+        # Try Radicle init (non-fatal)
+        rad_id = ""
+        rad_result = subprocess.run(
+            ["rad", "init", "--name", title, "--default-branch", "main",
+             "--description", f"DreamNode: {title}", "--no-confirm"],
+            cwd=node_path, capture_output=True, text=True,
+        )
+        if rad_result.returncode == 0:
+            # Extract bare key from rad output
+            for line in rad_result.stdout.splitlines():
+                if line.strip().startswith("rad:"):
+                    rad_id = line.strip().replace("rad:", "")
+                    break
+            if rad_id:
+                udd["id"] = rad_id
+                (node_path / ".udd").write_text(json.dumps(udd, indent=2))
+                subprocess.run(["git", "add", ".udd"], cwd=node_path, capture_output=True)
+                subprocess.run(
+                    ["git", "commit", "-m", "Update id with Radicle key"],
+                    cwd=node_path, capture_output=True,
+                )
+
+        return json.dumps({
+            "id": udd["id"],
+            "title": title,
+            "path": str(node_path),
+            "folder": folder_name,
+            "type": node_type,
+            "radicle": bool(rad_id),
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _execute_audit_garden(
+    keyword: str = "",
+    limit: int = 20,
+    include_shallow: bool = False,
+    check_metadata: bool = False,
+) -> str:
+    """Scan vault for DreamNodes needing attention."""
+    try:
+        BOILERPLATE_LINES = 2  # READMEs with <= this many non-blank lines are boilerplate
+        SHALLOW_LINES = 5      # READMEs with <= this many are shallow
+
+        nodes_needing_attention = []
+        total_nodes = 0
+        total_boilerplate = 0
+        total_shallow = 0
+        total_metadata_issues = 0
+
+        for udd_path in sorted(VAULT_DIR.rglob("*.udd")):
+            rel = udd_path.relative_to(VAULT_DIR)
+            # Skip nested (submodule) DreamNodes — only check top-level
+            if len(rel.parts) > 2:
+                continue
+
+            dn_dir = udd_path.parent
+            total_nodes += 1
+
+            # Keyword filter
+            folder_name = dn_dir.name
+            if keyword:
+                kw_lower = keyword.lower()
+                if kw_lower not in folder_name.lower():
+                    # Also check title from .udd
+                    try:
+                        udd = json.loads(udd_path.read_text())
+                        title = udd.get("title", "")
+                    except Exception:
+                        title = ""
+                    if kw_lower not in title.lower():
+                        continue
+
+            readme_path = dn_dir / "README.md"
+            issues = []
+
+            # Check README state
+            if not readme_path.exists():
+                issues.append("missing_readme")
+                total_boilerplate += 1
+            else:
+                content = readme_path.read_text(encoding="utf-8")
+                meaningful_lines = [
+                    l for l in content.splitlines()
+                    if l.strip() and not l.strip().startswith("#")
+                ]
+                if len(meaningful_lines) <= BOILERPLATE_LINES:
+                    issues.append("boilerplate_readme")
+                    total_boilerplate += 1
+                elif include_shallow and len(meaningful_lines) <= SHALLOW_LINES:
+                    issues.append("shallow_readme")
+                    total_shallow += 1
+
+            # Check metadata if requested
+            if check_metadata:
+                try:
+                    udd = json.loads(udd_path.read_text())
+                except (json.JSONDecodeError, OSError):
+                    issues.append("invalid_udd_json")
+                    total_metadata_issues += 1
+                    udd = {}
+
+                if udd:
+                    if not udd.get("id") and not udd.get("uuid"):
+                        issues.append("missing_id")
+                        total_metadata_issues += 1
+                    if not udd.get("title"):
+                        issues.append("missing_title")
+                        total_metadata_issues += 1
+                    if not udd.get("type"):
+                        issues.append("missing_type")
+                        total_metadata_issues += 1
+
+            if issues:
+                # Read title from .udd
+                try:
+                    udd_data = json.loads(udd_path.read_text())
+                    title = udd_data.get("title", folder_name)
+                except Exception:
+                    title = folder_name
+
+                nodes_needing_attention.append({
+                    "title": title,
+                    "folder": folder_name,
+                    "path": str(dn_dir),
+                    "issues": issues,
+                })
+
+            if len(nodes_needing_attention) >= limit:
+                break
+
+        return json.dumps({
+            "total_nodes": total_nodes,
+            "total_boilerplate": total_boilerplate,
+            "total_shallow": total_shallow,
+            "total_metadata_issues": total_metadata_issues,
+            "returned": len(nodes_needing_attention),
+            "limit": limit,
+            "nodes": nodes_needing_attention,
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _execute_read_dreamnode(identifier: str) -> str:
+    """Read a DreamNode by title, folder name, or absolute path."""
+    try:
+        dn_path = None
+
+        # Try as absolute path first
+        candidate = Path(identifier)
+        if candidate.is_absolute() and candidate.exists() and (candidate / ".udd").exists():
+            dn_path = candidate
+        else:
+            # Search vault for matching folder or title
+            identifier_lower = identifier.lower()
+            best_match = None
+
+            for udd_path in VAULT_DIR.rglob("*.udd"):
+                rel = udd_path.relative_to(VAULT_DIR)
+                if len(rel.parts) > 2:
+                    continue
+
+                dn_dir = udd_path.parent
+                folder_name = dn_dir.name
+
+                # Exact folder match
+                if folder_name.lower() == identifier_lower:
+                    dn_path = dn_dir
+                    break
+
+                # Title match from .udd
+                try:
+                    udd = json.loads(udd_path.read_text())
+                    title = udd.get("title", "")
+                    if title.lower() == identifier_lower:
+                        dn_path = dn_dir
+                        break
+                    # Fuzzy: identifier is substring of title or folder
+                    if identifier_lower in title.lower() or identifier_lower in folder_name.lower():
+                        if best_match is None:
+                            best_match = dn_dir
+                except Exception:
+                    pass
+
+            if dn_path is None:
+                dn_path = best_match
+
+        if dn_path is None:
+            return json.dumps({"error": f"No DreamNode found matching: {identifier}"})
+
+        # Read .udd
+        udd_path = dn_path / ".udd"
+        udd_data = {}
+        if udd_path.exists():
+            try:
+                udd_data = json.loads(udd_path.read_text())
+            except Exception:
+                udd_data = {"error": "invalid JSON in .udd"}
+
+        # Read README
+        readme_path = dn_path / "README.md"
+        readme_content = ""
+        if readme_path.exists():
+            readme_content = readme_path.read_text(encoding="utf-8")
+            if len(readme_content) > 5000:
+                readme_content = readme_content[:5000] + "\n\n[...truncated at 5000 chars...]"
+        else:
+            readme_content = "(no README.md)"
+
+        # List files (non-hidden, top-level only)
+        files = []
+        for f in sorted(dn_path.iterdir()):
+            if f.name.startswith("."):
+                continue
+            if f.is_dir():
+                files.append(f"{f.name}/")
+            else:
+                files.append(f.name)
+
+        return json.dumps({
+            "title": udd_data.get("title", dn_path.name),
+            "path": str(dn_path),
+            "folder": dn_path.name,
+            "metadata": udd_data,
+            "readme": readme_content,
+            "files": files,
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 def _execute_reveal_file(file_path: str) -> str:
@@ -1121,6 +1470,23 @@ async def _dispatch_tool(
     elif tool_name == "reveal_file":
         return _execute_reveal_file(
             file_path=tool_input.get("file_path", ""),
+        )
+    elif tool_name == "create_dreamnode":
+        return _execute_create_dreamnode(
+            title=tool_input.get("title", ""),
+            readme_content=tool_input.get("readme_content", ""),
+            node_type=tool_input.get("node_type", "dream"),
+        )
+    elif tool_name == "audit_garden":
+        return _execute_audit_garden(
+            keyword=tool_input.get("keyword", ""),
+            limit=tool_input.get("limit", 20),
+            include_shallow=tool_input.get("include_shallow", False),
+            check_metadata=tool_input.get("check_metadata", False),
+        )
+    elif tool_name == "read_dreamnode":
+        return _execute_read_dreamnode(
+            identifier=tool_input.get("identifier", ""),
         )
     elif tool_name == "run_claude_code":
         return await _execute_run_claude_code(
