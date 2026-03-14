@@ -353,13 +353,14 @@
     position: fixed; top: 8px; right: 8px; z-index: 9999;
     display: flex; align-items: center; gap: 6px;
   }
-  #reload-btn, #clear-chat-btn {
+  #reload-btn, #clear-chat-btn, #pipeline-toggle {
     background: none; border: 1px solid #333; border-radius: 4px;
     color: #555; font-size: 12px; padding: 4px 10px; cursor: pointer;
     font-family: -apple-system, sans-serif; white-space: nowrap;
     min-height: 30px;
   }
-  #reload-btn:hover, #clear-chat-btn:hover { color: #aaa; border-color: #555; }
+  #reload-btn:hover, #clear-chat-btn:hover, #pipeline-toggle:hover { color: #aaa; border-color: #555; }
+  #pipeline-toggle.active { color: #4a9a7a; border-color: #4a9a7a; }
 
   /* Vocab debug panel */
   #vocab-debug {
@@ -378,6 +379,7 @@
 <body>
 <div id="connection-status"></div>
 <div id="top-toolbar">
+<button id="pipeline-toggle" class="active" onclick="togglePipeline()" title="Toggle transcription mode: async (high quality, 30s chunks) vs sync (real-time, lower quality)">async</button>
 <button id="clear-chat-btn" onclick="clearChat()" title="Clear chat (archives current thread)">clear</button>
 <button id="reload-btn" onclick="reloadServer()" title="Restart AURYN server">reload</button>
 </div>
@@ -1918,10 +1920,14 @@ function connectTranscriptionWs() {
           stopRecordingResolve();
           stopRecordingResolve = null;
         }
+      } else if (data.type === 'transcript_full') {
+        // Async mode: server sends full transcript as single source of truth
+        inputEl.value = window._txPrefix + data.text;
+        inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length;
+        inputEl.style.height = 'auto';
+        inputEl.style.height = inputEl.scrollHeight + 'px';
+        inputEl.focus();
       } else if (data.type === 'transcript_correction') {
-        // Stage 3: Gatekeeper corrections logged but not applied to UI
-        // (corrections still saved to transcript file server-side)
-        // TODO: re-enable once text-replacement is reliable
         console.log('[Gatekeeper] Correction received (not applied to UI):', (data.replace_text || '').substring(0, 80));
       } else if (data.type === 'vocab_update') {
         renderVocabDebug(data);
@@ -1964,7 +1970,7 @@ async function startRecording() {
       audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
     });
 
-    transcriptionWs.send(JSON.stringify({ type: 'start_stream' }));
+    transcriptionWs.send(JSON.stringify({ type: 'start_stream', pipeline_mode: pipelineMode }));
 
     mediaRecorder = new MediaRecorder(stream, {
       mimeType: 'audio/webm;codecs=opus'
@@ -2138,7 +2144,7 @@ async function transcribeFile(file) {
     await new Promise((resolve, reject) => {
       ws.onopen = () => {
         label.textContent = `${file.name}: transcribing...`;
-        ws.send(JSON.stringify({ type: 'start_stream', filename: file.name }));
+        ws.send(JSON.stringify({ type: 'start_stream', filename: file.name, pipeline_mode: pipelineMode }));
         ws.send(buffer);
         ws.send(JSON.stringify({ type: 'end_stream' }));
       };
@@ -2426,6 +2432,16 @@ function finishClaudeCode() {
 }
 
 // Server reload
+// Pipeline mode toggle: "async" (high quality, 30s turbo) vs "sync" (real-time moonshine+whisper+gatekeeper)
+let pipelineMode = 'async';
+function togglePipeline() {
+  pipelineMode = pipelineMode === 'async' ? 'sync' : 'async';
+  const btn = document.getElementById('pipeline-toggle');
+  btn.textContent = pipelineMode;
+  btn.classList.toggle('active', pipelineMode === 'async');
+  console.log('[AURYN] Pipeline mode:', pipelineMode);
+}
+
 function reloadServer() {
   const protocol = window.location.protocol;
   const host = window.location.host;

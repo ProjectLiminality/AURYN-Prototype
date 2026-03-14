@@ -1577,12 +1577,13 @@ _MLX_WHISPER_MODELS = {
 }
 _whisper_model_size = "medium"
 _whisper_repo: str = _MLX_WHISPER_MODELS["medium"]
-def _transcribe_sync(wav_path: str, prompt: str = "") -> dict:
+_whisper_async_repo: str = _MLX_WHISPER_MODELS["turbo"]
+def _transcribe_sync(wav_path: str, prompt: str = "", repo: str | None = None) -> dict:
     """Synchronous Whisper transcription. Called from run_in_executor."""
     import mlx_whisper
     return mlx_whisper.transcribe(
         wav_path,
-        path_or_hf_repo=_whisper_repo,
+        path_or_hf_repo=repo or _whisper_repo,
         language="en",
         initial_prompt=prompt or None,
     )
@@ -1737,6 +1738,8 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
     chunk_interval = 8.0  # seconds between Whisper transcription passes
     process_task: asyncio.Task | None = None
     moonshine_task: asyncio.Task | None = None
+    async_task: asyncio.Task | None = None
+    pipeline_mode: str = "async"  # "sync" or "async"
 
     # Vocabulary feedback loop state
     context_index = load_index()
@@ -2179,6 +2182,87 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 except OSError:
                     pass
 
+    # --- Async pipeline: high-quality Whisper-only, 30s chunks, no gatekeeper ---
+    async_chunk_interval = 30.0
+    async_overlap = 3.0
+    async_whisper_last_sec = 0.0
+
+    async def periodic_whisper_async():
+        """Async mode: high-quality Whisper (turbo) every 30s. No Moonshine, no gatekeeper.
+        Sends transcript_full on every update — server is single source of truth."""
+        nonlocal async_whisper_last_sec, last_transcribed_sec, last_processed_bytes
+        while True:
+            await asyncio.sleep(async_chunk_interval)
+            if not audio_file or not audio_file.exists():
+                continue
+            if len(cumulative_webm) <= last_processed_bytes:
+                continue
+
+            total_sec = time.time() - start_time
+            window_start = async_whisper_last_sec
+
+            # Advance immediately
+            async_whisper_last_sec = total_sec
+            last_transcribed_sec = total_sec
+            last_processed_bytes = len(cumulative_webm)
+
+            # Extract audio with overlap
+            overlap = async_overlap if window_start > 0 else 0.0
+            extract_from = max(0, window_start - overlap)
+            wav_path = await _extract_time_range_file(str(audio_file), extract_from)
+            if not wav_path:
+                continue
+
+            try:
+                # Build prompt: vocab + recent transcript context
+                prompt = vocab_prompt
+                if transcript_parts:
+                    recent = transcript_parts[-1]
+                    prompt = vocab_prompt + ". " + recent if vocab_prompt else recent
+
+                result = await loop.run_in_executor(
+                    None,
+                    lambda p=prompt, w=wav_path: _transcribe_sync(w, p, _whisper_async_repo),
+                )
+
+                segs = result["segments"]
+                # Drop segments whose midpoint falls in the overlap zone
+                if overlap > 0 and segs:
+                    segs = [s for s in segs
+                            if (s["start"] + s["end"]) / 2 >= overlap]
+
+                new_text = " ".join(
+                    s["text"].strip() for s in segs
+                ).strip()
+                new_text = _filter_hallucination(new_text)
+
+                if not new_text:
+                    continue
+
+                # Process vocab (pinning, ephemeral BM25, DreamNode notifications)
+                new_text = await _process_new_text(new_text, notify_hits=True)
+                await _send_vocab_state()
+
+                # Append to transcript parts
+                transcript_parts.append(new_text)
+                _write_transcript_chunk(new_text, start_time)
+                plog(f"[Async] Chunk: {new_text[:100]}...")
+
+                # Send full transcript to UI — single source of truth
+                full = " ".join(transcript_parts)
+                await ws.send_json({
+                    "type": "transcript_full",
+                    "text": full,
+                })
+
+            except Exception as e:
+                plog(f"[Async Pipeline] Error: {e}")
+            finally:
+                try:
+                    os.unlink(wav_path)
+                except OSError:
+                    pass
+
     async for msg in ws:
         if msg.type == aiohttp.WSMsgType.TEXT:
             try:
@@ -2218,32 +2302,41 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 _start_transcript_session(f"{ts}{ext}", start_time)
 
                 # Cancel any existing pipeline tasks before launching new ones
-                if moonshine_task is not None:
-                    moonshine_task.cancel()
-                if process_task is not None:
-                    process_task.cancel()
-                # Launch three-stage pipeline
-                moonshine_task = asyncio.create_task(periodic_moonshine())
-                process_task = asyncio.create_task(periodic_whisper_and_gatekeeper())
-                plog(f"[Pipeline] Started: Moonshine→Whisper→Gatekeeper")
-                await ws.send_json({"type": "session_started", "session_id": session_id, "pipeline": "moonshine-whisper-gatekeeper"})
+                for t in [moonshine_task, process_task, async_task]:
+                    if t is not None:
+                        t.cancel()
+                moonshine_task = None
+                process_task = None
+                async_task = None
+
+                # Read pipeline mode from client
+                pipeline_mode = data.get("pipeline_mode", "async")
+
+                if pipeline_mode == "sync":
+                    # Three-stage: Moonshine → Whisper → Gatekeeper
+                    moonshine_task = asyncio.create_task(periodic_moonshine())
+                    process_task = asyncio.create_task(periodic_whisper_and_gatekeeper())
+                    plog(f"[Pipeline] Started: Moonshine→Whisper→Gatekeeper (sync mode)")
+                else:
+                    # Async: high-quality Whisper turbo only, 30s chunks
+                    async_whisper_last_sec = 0.0
+                    async_task = asyncio.create_task(periodic_whisper_async())
+                    plog(f"[Pipeline] Started: Whisper turbo 30s chunks (async mode)")
+
+                await ws.send_json({"type": "session_started", "session_id": session_id, "pipeline": pipeline_mode})
 
             elif data.get("type") == "end_stream":
                 # Cancel all pipeline tasks
-                if moonshine_task is not None:
-                    moonshine_task.cancel()
-                    try:
-                        await moonshine_task
-                    except asyncio.CancelledError:
-                        pass
-                    moonshine_task = None
-                if process_task:
-                    process_task.cancel()
-                    try:
-                        await process_task
-                    except asyncio.CancelledError:
-                        pass
-                    process_task = None
+                for t in [moonshine_task, process_task, async_task]:
+                    if t is not None:
+                        t.cancel()
+                        try:
+                            await t
+                        except asyncio.CancelledError:
+                            pass
+                moonshine_task = None
+                process_task = None
+                async_task = None
 
                 # Final transcription pass — only the tail not yet transcribed
                 # Use actual file duration (not wall clock) to handle file drops
@@ -2261,9 +2354,11 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                                 recent = transcript_parts[-1]
                                 prompt = vocab_prompt + ". " + recent if vocab_prompt else recent
 
+                            # Use turbo model for async mode final pass
+                            final_repo = _whisper_async_repo if pipeline_mode == "async" else None
                             result = await loop.run_in_executor(
                                 None,
-                                lambda: _transcribe_sync(wav_path, prompt),
+                                lambda: _transcribe_sync(wav_path, prompt, final_repo),
                             )
 
                             new_text = " ".join(
@@ -2272,9 +2367,13 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                             new_text = _filter_hallucination(new_text)
                             if new_text:
                                 new_text = await _process_new_text(new_text)
-                                chunk_text = " " + new_text if transcript_parts else new_text
-                                await ws.send_json({"type": "transcript_chunk", "text": chunk_text})
                                 transcript_parts.append(new_text)
+                                if pipeline_mode == "async":
+                                    full = " ".join(transcript_parts)
+                                    await ws.send_json({"type": "transcript_full", "text": full})
+                                else:
+                                    chunk_text = " " + new_text if transcript_parts else new_text
+                                    await ws.send_json({"type": "transcript_chunk", "text": chunk_text})
                                 _write_transcript_chunk(new_text, start_time)
                                 await _send_vocab_state()
                         except Exception as e:
@@ -2317,10 +2416,9 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
         elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
             break
 
-    if process_task:
-        process_task.cancel()
-    if moonshine_task is not None:
-        moonshine_task.cancel()
+    for t in [process_task, moonshine_task, async_task]:
+        if t is not None:
+            t.cancel()
 
     return ws
 
