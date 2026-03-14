@@ -2713,9 +2713,17 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                     whisper_text, unrefined_text
                 )
 
-                # Use precise alignment — no chunk boundary snapping
+                # Use precise alignment for gatekeeper input
                 aligned_word_entries = unrefined_words[align_start:align_end]
                 chunk_indices = sorted(set(mw["chunk_index"] for mw in aligned_word_entries))
+
+                # Also collect orphan words from touched chunks (words before/after
+                # the aligned range but in the same chunk). These will be consumed
+                # during replacement to prevent them persisting as duplicates.
+                all_chunk_words = [
+                    mw for mw in unrefined_words
+                    if mw["chunk_index"] in chunk_indices
+                ]
 
                 plog(f"[Alignment] Whisper ({len(whisper_text.split())}w) aligned to Moonshine ({align_end - align_start}w of {len(unrefined_words)}w unrefined, chunks {chunk_indices})")
                 plog(f"[Gatekeeper] Input A (Moonshine, chunks {chunk_indices}): {aligned_moon[:120]}...")
@@ -2747,18 +2755,20 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 if gatekeeper_result and gatekeeper_result["text"].strip():
                     refined = gatekeeper_result["text"].strip()
 
-                    # Replace aligned words in moonshine_words with refined text
+                    # Replace all words from touched chunks with refined text
+                    # This consumes orphan words (filler/artifacts before/after
+                    # the aligned range) preventing them from persisting
                     refined_word_list = refined.split()
-                    # Find the position of aligned_word_entries in moonshine_words
-                    if aligned_word_entries:
-                        first_entry = aligned_word_entries[0]
+                    words_to_remove = all_chunk_words
+                    if words_to_remove:
+                        first_entry = words_to_remove[0]
                         try:
                             insert_pos = moonshine_words.index(first_entry)
                         except ValueError:
                             insert_pos = None
                         if insert_pos is not None:
-                            # Remove old entries
-                            for mw in aligned_word_entries:
+                            # Remove all words from touched chunks
+                            for mw in words_to_remove:
                                 if mw in moonshine_words:
                                     moonshine_words.remove(mw)
                             # Insert refined words at the same position
