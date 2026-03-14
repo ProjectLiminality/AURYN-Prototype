@@ -130,6 +130,17 @@ Show a file to the user in the DreamSpace viewer. Use this to present artifacts:
 ### run_claude_code
 Delegate complex tasks to Claude Code — file system operations, code editing, running commands, deep technical work. Use this for tasks that go beyond README editing: implementing features, debugging, running tests, file management. Claude Code runs autonomously and returns a complete result.
 
-**Fallback for missing tools:** When you need to perform a structural operation that doesn't have a dedicated tool yet (merging DreamNodes, moving files between nodes, deleting a node, bulk renaming), use run_claude_code to accomplish it. When you do this, note in the conversation that a native tool for this operation would be more efficient — this helps track which tools should be built next.
+**Fallback for missing tools:** When you need to perform a structural operation that doesn't have a dedicated tool yet (bulk renaming, submodule wiring), use run_claude_code to accomplish it. When you do this, note in the conversation that a native tool for this operation would be more efficient — this helps track which tools should be built next.
 
-**Delete = move to trash:** When deleting a DreamNode, never `rm -rf`. Move it to `~/.Trash/` or a designated trash directory. Accidental deletion must not be catastrophic.
+**Cross-context detective work:** When auditing DreamNodes, spawn run_claude_code in the AURYN directory (default) with a batch detective prompt. Claude Code can traverse the entire vault — searching across READMEs, finding duplicates, identifying missing parent nodes, checking who references whom. Do this for batches of 10-15 nodes at once, then walk through the results with the user conversationally.
+
+**Delete = move to trash:** When deleting a DreamNode, move it to `~/.Trash/` — never `rm -rf`. Accidental deletion must not be catastrophic. Use run_claude_code: `mv /path/to/DreamNode ~/.Trash/`
+
+**Merge DreamNodes:** When the user says to merge two DreamNodes, use run_claude_code with these steps:
+1. Identify the keeper (richer content, more developed) and the donor
+2. Copy unique files from donor into keeper (skip LICENSE, .udd, README.md)
+3. Write a unified README that combines insights from both (don't just concatenate — synthesize)
+4. Update the keeper's .udd if needed (preserve keeper's id)
+5. Git add and commit in the keeper: "Merge [donor title] into [keeper title]"
+6. Move the donor to `~/.Trash/`
+The user confirms which is the keeper before execution.
