@@ -1938,7 +1938,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 
     # --- Three-stage pipeline state ---
     moonshine = _get_moonshine()
-    moonshine_interval = 8.0  # Stage 1: longer chunks for better quality
+    moonshine_interval = 3.0  # Stage 1: fast cycle (3s)
     moonshine_last_sec = 0.0  # audio seconds already processed by Moonshine
     # Track Moonshine chunks by index for retroactive correction
     moonshine_chunk_index = 0  # incremented for each Moonshine chunk sent to UI
@@ -1975,7 +1975,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 continue  # not enough new audio
 
             # Extract new audio (small overlap for context)
-            overlap = 2.0 if moonshine_last_sec > 0 else 0.0
+            overlap = 0.5 if moonshine_last_sec > 0 else 0.0
             extract_from = max(0, moonshine_last_sec - overlap)
             wav_path = await _extract_time_range_file(str(audio_file), extract_from)
             if not wav_path:
