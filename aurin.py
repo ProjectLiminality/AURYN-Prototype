@@ -1806,22 +1806,39 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 
     def _check_vocab_hits(text: str) -> list[dict]:
         """Check if any DreamNode names appear in the transcribed text.
-        Returns list of matched DreamNode info dicts (deduped by uuid). These get pinned."""
-        text_lower = text.lower()
+        Case-sensitive exact match against canonical folder/title forms.
+        If Whisper was vocab-primed and still didn't produce the exact casing,
+        that's signal it wasn't actually said — don't pretend otherwise."""
         hits = []
         seen_uuids = set()
-        for key, info in _vocab_lookup.items():
-            if info["uuid"] in seen_uuids:
+        # Collect unique canonical names (folder, title) per uuid
+        canonical: dict[str, list[str]] = {}  # uuid -> [name1, name2, ...]
+        info_by_uuid: dict[str, dict] = {}
+        for info in _vocab_lookup.values():
+            uid = info["uuid"]
+            if uid in canonical:
                 continue
-            if len(key) <= 3:
-                # Short names need word boundaries
-                if re.search(r'\b' + re.escape(key) + r'\b', text_lower):
-                    hits.append(info)
-                    seen_uuids.add(info["uuid"])
-            else:
-                if key in text_lower:
-                    hits.append(info)
-                    seen_uuids.add(info["uuid"])
+            names = set()
+            if info["folder"]:
+                names.add(info["folder"])
+            if info["title"]:
+                names.add(info["title"])
+            canonical[uid] = list(names)
+            info_by_uuid[uid] = info
+        for uid, names in canonical.items():
+            if uid in seen_uuids:
+                continue
+            for name in names:
+                if len(name) <= 3:
+                    if re.search(r'(?<![a-zA-Z])' + re.escape(name) + r'(?![a-zA-Z])', text):
+                        hits.append(info_by_uuid[uid])
+                        seen_uuids.add(uid)
+                        break
+                else:
+                    if name in text:
+                        hits.append(info_by_uuid[uid])
+                        seen_uuids.add(uid)
+                        break
         return hits
 
     def _update_ephemeral_vocab(text: str):
@@ -2188,8 +2205,17 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
     async_whisper_last_sec = 0.0
 
     async def periodic_whisper_async():
-        """Async mode: high-quality Whisper (turbo) every 30s. No Moonshine, no gatekeeper.
-        Sends transcript_full on every update — server is single source of truth."""
+        """Async mode: double-pass Whisper (turbo) every 30s. No Moonshine, no gatekeeper.
+
+        Double-pass strategy:
+        1. First pass: transcribe with current vocab prompt (from previous chunks)
+        2. Run BM25 on first-pass text to discover relevant DreamNode vocab
+        3. Second pass: re-transcribe same audio with enriched vocab prompt
+        4. Send second-pass result as transcript_full
+
+        This means the very first mention of a term benefits from vocab priming,
+        rather than waiting until the next chunk.
+        """
         nonlocal async_whisper_last_sec, last_transcribed_sec, last_processed_bytes
         while True:
             await asyncio.sleep(async_chunk_interval)
@@ -2214,39 +2240,70 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 continue
 
             try:
-                # Build prompt: vocab + recent transcript context
-                prompt = vocab_prompt
+                # --- Pass 1: transcribe with current vocab ---
+                prompt1 = vocab_prompt
                 if transcript_parts:
                     recent = transcript_parts[-1]
-                    prompt = vocab_prompt + ". " + recent if vocab_prompt else recent
+                    prompt1 = vocab_prompt + ". " + recent if vocab_prompt else recent
 
-                result = await loop.run_in_executor(
+                result1 = await loop.run_in_executor(
                     None,
-                    lambda p=prompt, w=wav_path: _transcribe_sync(w, p, _whisper_async_repo),
+                    lambda p=prompt1, w=wav_path: _transcribe_sync(w, p, _whisper_async_repo),
                 )
 
-                segs = result["segments"]
-                # Drop segments whose midpoint falls in the overlap zone
-                if overlap > 0 and segs:
-                    segs = [s for s in segs
-                            if (s["start"] + s["end"]) / 2 >= overlap]
+                segs1 = result1["segments"]
+                if overlap > 0 and segs1:
+                    segs1 = [s for s in segs1
+                             if (s["start"] + s["end"]) / 2 >= overlap]
+
+                pass1_text = " ".join(
+                    s["text"].strip() for s in segs1
+                ).strip()
+                pass1_text = _filter_hallucination(pass1_text)
+
+                if not pass1_text:
+                    continue
+
+                plog(f"[Async] Pass 1: {pass1_text[:100]}...")
+
+                # --- Update vocab from pass 1 text (BM25 + pinning) ---
+                # This enriches the vocab prompt BEFORE pass 2
+                _update_ephemeral_vocab(pass1_text)
+                _rebuild_prompt()
+
+                # --- Pass 2: re-transcribe with enriched vocab ---
+                prompt2 = vocab_prompt
+                if transcript_parts:
+                    recent = transcript_parts[-1]
+                    prompt2 = vocab_prompt + ". " + recent if vocab_prompt else recent
+
+                result2 = await loop.run_in_executor(
+                    None,
+                    lambda p=prompt2, w=wav_path: _transcribe_sync(w, p, _whisper_async_repo),
+                )
+
+                segs2 = result2["segments"]
+                if overlap > 0 and segs2:
+                    segs2 = [s for s in segs2
+                             if (s["start"] + s["end"]) / 2 >= overlap]
 
                 new_text = " ".join(
-                    s["text"].strip() for s in segs
+                    s["text"].strip() for s in segs2
                 ).strip()
                 new_text = _filter_hallucination(new_text)
 
                 if not new_text:
                     continue
 
-                # Process vocab (pinning, ephemeral BM25, DreamNode notifications)
+                plog(f"[Async] Pass 2: {new_text[:100]}...")
+
+                # Process vocab hits from final text (pinning + DreamNode notifications)
                 new_text = await _process_new_text(new_text, notify_hits=True)
                 await _send_vocab_state()
 
                 # Append to transcript parts
                 transcript_parts.append(new_text)
                 _write_transcript_chunk(new_text, start_time)
-                plog(f"[Async] Chunk: {new_text[:100]}...")
 
                 # Send full transcript to UI — single source of truth
                 full = " ".join(transcript_parts)
