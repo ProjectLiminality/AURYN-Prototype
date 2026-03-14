@@ -2608,12 +2608,11 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                             "refined": False,
                         })
 
-                    # Send immediately — this is the fast path
-                    chunk_text = " " + new_text if transcript_parts else new_text
+                    # Send full transcript — single source of truth
+                    full_transcript = " ".join(mw["word"] for mw in moonshine_words)
                     await ws.send_json({
-                        "type": "transcript_chunk",
-                        "text": chunk_text,
-                        "chunk_index": chunk_idx,
+                        "type": "transcript_full",
+                        "text": full_transcript,
                         "stage": "moonshine",
                     })
                     transcript_parts.append(new_text)
@@ -2748,23 +2747,41 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 if gatekeeper_result and gatekeeper_result["text"].strip():
                     refined = gatekeeper_result["text"].strip()
 
-                    # Mark aligned words as refined in moonshine_words
-                    for mw in aligned_word_entries:
-                        mw["refined"] = True
+                    # Replace aligned words in moonshine_words with refined text
+                    refined_word_list = refined.split()
+                    # Find the position of aligned_word_entries in moonshine_words
+                    if aligned_word_entries:
+                        first_entry = aligned_word_entries[0]
+                        try:
+                            insert_pos = moonshine_words.index(first_entry)
+                        except ValueError:
+                            insert_pos = None
+                        if insert_pos is not None:
+                            # Remove old entries
+                            for mw in aligned_word_entries:
+                                if mw in moonshine_words:
+                                    moonshine_words.remove(mw)
+                            # Insert refined words at the same position
+                            for i, word in enumerate(refined_word_list):
+                                moonshine_words.insert(insert_pos + i, {
+                                    "word": word,
+                                    "chunk_index": -1,
+                                    "refined": True,
+                                })
 
                     # Add to refined history for future context
                     refined_history.append(refined)
                     if len(refined_history) > 5:
                         refined_history.pop(0)
 
-                    # Send correction to UI — text-based replacement
+                    # Send full transcript to UI — complete replacement, no splicing
+                    full_transcript = " ".join(mw["word"] for mw in moonshine_words)
+                    await ws.send_json({
+                        "type": "transcript_full",
+                        "text": full_transcript,
+                        "stage": "gatekeeper",
+                    })
                     if refined != aligned_moon:
-                        await ws.send_json({
-                            "type": "transcript_correction",
-                            "find_text": aligned_moon,
-                            "replace_text": refined,
-                            "stage": "gatekeeper",
-                        })
                         _write_transcript_chunk(f"[refined] {refined}", start_time)
                         plog(f"[Gatekeeper] Correction: {refined[:80]}...")
 
