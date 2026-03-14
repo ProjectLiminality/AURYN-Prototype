@@ -1875,12 +1875,17 @@ function connectTranscriptionWs() {
     transcriptionWs.onmessage = (e) => {
       const data = JSON.parse(e.data);
 
+      // Chunk-array model: input field is rebuilt from this array.
+      // Corrections update entries in-place, avoiding position drift.
+      if (!window._txChunks) window._txChunks = [];
       if (!window._txPrefix) window._txPrefix = ''; // text typed before recording
 
-      if (data.type === 'transcript_full') {
-        // Full transcript from server — single source of truth
-        // Replaces entire input content (after any user-typed prefix)
-        inputEl.value = window._txPrefix + data.text;
+      if (data.type === 'transcript_chunk') {
+        // Append chunk to array
+        const entry = { index: data.chunk_index, text: data.text, stage: data.stage || 'whisper' };
+        window._txChunks.push(entry);
+        // Rebuild input field from chunk array
+        inputEl.value = window._txPrefix + window._txChunks.map(c => c.text).join('');
         inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length;
         inputEl.style.height = 'auto';
         inputEl.style.height = inputEl.scrollHeight + 'px';
@@ -1895,6 +1900,7 @@ function connectTranscriptionWs() {
         }
       } else if (data.type === 'stream_ended') {
         // Leave text in the input field for editing — don't auto-send
+        window._txChunks = [];
         window._txPrefix = '';
         document.getElementById('vocab-debug').classList.remove('active');
         inputEl.focus();
@@ -1912,12 +1918,18 @@ function connectTranscriptionWs() {
           stopRecordingResolve();
           stopRecordingResolve = null;
         }
+      } else if (data.type === 'transcript_correction') {
+        // Stage 3: Gatekeeper corrections logged but not applied to UI
+        // (corrections still saved to transcript file server-side)
+        // TODO: re-enable once text-replacement is reliable
+        console.log('[Gatekeeper] Correction received (not applied to UI):', (data.replace_text || '').substring(0, 80));
       } else if (data.type === 'vocab_update') {
         renderVocabDebug(data);
       } else if (data.type === 'session_started') {
         console.log('[AURYN] Transcription session:', data.session_id);
-        // Preserve any existing text as prefix for new session
+        // Reset chunk array for new session, preserve any existing text as prefix
         window._txPrefix = inputEl.value;
+        window._txChunks = [];
         // Show vocab debug panel during transcription
         document.getElementById('vocab-debug').classList.add('active');
       }
@@ -2133,8 +2145,8 @@ async function transcribeFile(file) {
 
       ws.onmessage = (e) => {
         const data = JSON.parse(e.data);
-        if (data.type === 'transcript_full') {
-          transcript = data.text;
+        if (data.type === 'transcript_chunk') {
+          transcript += data.text;
           label.textContent = `${file.name}: transcribing... (${transcript.trim().length} chars)`;
           scrollToBottom();
         } else if (data.type === 'stream_ended') {

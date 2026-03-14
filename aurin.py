@@ -602,20 +602,10 @@ async def ws_inference(request: web.Request) -> web.WebSocketResponse:
                 model = options.get("model") or default_model
 
                 if model.startswith("claude-"):
-                    api_key = request.app.get("claude_api_key", "")
-                    if api_key:
-                        coro = _stream_claude(
-                            ws, request_id, messages, model, api_key,
-                        )
-                    elif _find_claude_binary():
-                        # No API key but claude CLI available — use Claude Max
-                        coro = _stream_claude_cli(
-                            ws, request_id, messages, model,
-                        )
-                    else:
-                        coro = _stream_claude(
-                            ws, request_id, messages, model, "",
-                        )  # Will emit the "no API key" error
+                    coro = _stream_claude(
+                        ws, request_id, messages, model,
+                        request.app.get("claude_api_key", ""),
+                    )
                 else:
                     coro = _stream_ollama(ws, request_id, messages, model, ollama_url)
 
@@ -719,39 +709,6 @@ async def _stream_ollama(
 
 AURYN_TOOLS = [
     {
-        "name": "create_dreamnode",
-        "description": (
-            "Create a new DreamNode in the vault. Use this ONLY after proposing the creation "
-            "to the user and receiving confirmation. Provide a clear title and initial README "
-            "content. The README should use [Title](dreamnode://id) syntax to reference other "
-            "DreamNodes. Create children before parents so parent READMEs can reference them. "
-            "Returns the new DreamNode's id and path."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "title": {
-                    "type": "string",
-                    "description": "The title for the new DreamNode. Will be converted to PascalCase for the folder name.",
-                },
-                "readme_content": {
-                    "type": "string",
-                    "description": (
-                        "Initial README.md content in markdown. Should define the concept clearly. "
-                        "Use [Name](dreamnode://id) to reference other DreamNodes."
-                    ),
-                },
-                "type": {
-                    "type": "string",
-                    "enum": ["dream", "dreamer"],
-                    "description": "Node type — 'dream' for concepts/projects, 'dreamer' for people (default: dream).",
-                    "default": "dream",
-                },
-            },
-            "required": ["title", "readme_content"],
-        },
-    },
-    {
         "name": "search_dreamnodes",
         "description": (
             "Search the DreamNode knowledge garden using BM25 + vocabulary matching. "
@@ -779,24 +736,6 @@ AURYN_TOOLS = [
                 },
             },
             "required": ["query"],
-        },
-    },
-    {
-        "name": "read_dreamnode",
-        "description": (
-            "Read a DreamNode's README, metadata, and file listing. Use this for detective work — "
-            "examining a DreamNode's content without it being loaded as a petal. Accepts a title, "
-            "folder name, or absolute path. Returns the full README, .udd metadata, and file list."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "identifier": {
-                    "type": "string",
-                    "description": "DreamNode title, folder name, or absolute path.",
-                },
-            },
-            "required": ["identifier"],
         },
     },
     {
@@ -876,208 +815,7 @@ AURYN_TOOLS = [
             "required": ["file_path"],
         },
     },
-    {
-        "name": "audit_garden",
-        "description": (
-            "Scan the knowledge garden for DreamNodes that need attention. Returns a list of "
-            "DreamNodes with boilerplate/empty READMEs that could benefit from an interview — "
-            "where you ask the user to describe what the concept is, then populate the README. "
-            "Use this to start a knowledge gardening session. You can optionally filter by keyword. "
-            "After receiving results, walk through them with the user one by one: ask what each "
-            "DreamNode is, offer to populate the README, delete the node, or skip."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "filter": {
-                    "type": "string",
-                    "description": "Optional keyword filter — only return DreamNodes whose title contains this string (case-insensitive).",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return (default 20).",
-                    "default": 20,
-                },
-                "include_shallow": {
-                    "type": "boolean",
-                    "description": "Also include READMEs with content but fewer than 5 lines (shallow but not empty). Default false.",
-                    "default": False,
-                },
-            },
-            "required": [],
-        },
-    },
 ]
-
-
-def _sanitize_to_pascal_case(name: str) -> str:
-    """Convert a title to PascalCase folder name. 'Race to the Top' -> 'RaceToTheTop'"""
-    # Split on spaces, hyphens, underscores
-    words = re.split(r"[\s\-_]+", name)
-    # Capitalize each word, join
-    return "".join(w.capitalize() for w in words if w)
-
-
-def _execute_create_dreamnode(title: str, readme_content: str = "", node_type: str = "dream") -> str:
-    """Create a new DreamNode with git init, .udd, and README.md.
-
-    Uses the new 'id' field (bare Radicle key, no rad: prefix) for new DreamNodes.
-    Returns JSON with id, title, path for immediate use in dreamnode:// links.
-    """
-    try:
-        folder_name = _sanitize_to_pascal_case(title)
-        node_path = VAULT_DIR / folder_name
-
-        if node_path.exists():
-            return json.dumps({"error": f"Directory already exists: {node_path}"})
-
-        # Generate UUID (will be replaced by Radicle ID once rad init runs)
-        node_id = str(uuid.uuid4())
-
-        # Create directory
-        node_path.mkdir(parents=True)
-
-        # Write .udd with new schema (id instead of uuid/radicleId)
-        udd = {
-            "id": node_id,
-            "title": title,
-            "type": node_type,
-            "dreamTalk": "",
-        }
-        (node_path / ".udd").write_text(json.dumps(udd, indent=2))
-
-        # Write README
-        if not readme_content:
-            readme_content = f"# {title}\n"
-        (node_path / "README.md").write_text(readme_content, encoding="utf-8")
-
-        # Git init + initial commit
-        subprocess.run(["git", "init"], cwd=str(node_path), capture_output=True)
-        subprocess.run(["git", "add", "."], cwd=str(node_path), capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", f"Initialize DreamNode: {title}"],
-            cwd=str(node_path), capture_output=True,
-        )
-
-        # Try Radicle init (non-fatal if rad not available)
-        try:
-            result = subprocess.run(
-                ["rad", "init", "--name", folder_name, "--description", f"DreamNode: {title}",
-                 "--default-branch", "main", "--public"],
-                cwd=str(node_path), capture_output=True, text=True, timeout=15,
-            )
-            if result.returncode == 0:
-                # Extract RID from output
-                rid_match = re.search(r"(rad:[a-zA-Z0-9]+)", result.stdout + result.stderr)
-                if rid_match:
-                    rid = rid_match.group(1)
-                    # Update .udd with the bare key (strip rad: prefix)
-                    bare_key = rid.replace("rad:", "")
-                    udd["id"] = bare_key
-                    (node_path / ".udd").write_text(json.dumps(udd, indent=2))
-                    subprocess.run(["git", "add", ".udd"], cwd=str(node_path), capture_output=True)
-                    subprocess.run(
-                        ["git", "commit", "-m", "Set Radicle ID"],
-                        cwd=str(node_path), capture_output=True,
-                    )
-                    node_id = bare_key
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass  # Radicle not available, keep UUID as id
-
-        return json.dumps({
-            "id": node_id,
-            "title": title,
-            "type": node_type,
-            "path": str(node_path),
-            "folder": folder_name,
-        })
-
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-def _execute_audit_garden(
-    filter_keyword: str = "", limit: int = 20, include_shallow: bool = False
-) -> str:
-    """Scan the vault for DreamNodes with boilerplate or missing READMEs.
-
-    Returns a JSON list of DreamNodes that need attention, sorted by title.
-    Boilerplate = README is empty, missing, or contains only a heading (<=2 lines).
-    Shallow = README has some content but fewer than 5 lines.
-    """
-    try:
-        results = []
-        for udd_path in sorted(VAULT_DIR.glob("*/.udd")):
-            node_dir = udd_path.parent
-            # Skip AURYN itself and hidden dirs
-            if node_dir.name.startswith("."):
-                continue
-
-            try:
-                udd = json.loads(udd_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                continue
-
-            title = udd.get("title", node_dir.name)
-            node_id = udd.get("id", udd.get("uuid", ""))
-
-            # Apply keyword filter
-            if filter_keyword and filter_keyword.lower() not in title.lower():
-                continue
-
-            readme_path = node_dir / "README.md"
-            if not readme_path.exists():
-                status = "missing"
-                line_count = 0
-                content_preview = ""
-            else:
-                content = readme_path.read_text(encoding="utf-8").strip()
-                lines = [l for l in content.split("\n") if l.strip()]
-                line_count = len(lines)
-
-                if line_count <= 2:
-                    # Check if it's truly boilerplate (just a heading)
-                    status = "boilerplate"
-                    content_preview = content[:100]
-                elif include_shallow and line_count < 5:
-                    status = "shallow"
-                    content_preview = content[:200]
-                else:
-                    continue  # Has real content, skip
-
-            results.append({
-                "title": title,
-                "id": node_id,
-                "path": str(node_dir),
-                "status": status,
-                "lines": line_count,
-                "preview": content_preview,
-            })
-
-            if len(results) >= limit:
-                break
-
-        # Count totals for context
-        total_nodes = len(list(VAULT_DIR.glob("*/.udd")))
-        total_boilerplate = 0
-        for udd_path in VAULT_DIR.glob("*/.udd"):
-            readme = udd_path.parent / "README.md"
-            if not readme.exists():
-                total_boilerplate += 1
-            else:
-                lines = [l for l in readme.read_text(encoding="utf-8").strip().split("\n") if l.strip()]
-                if len(lines) <= 2:
-                    total_boilerplate += 1
-
-        return json.dumps({
-            "nodes": results,
-            "returned": len(results),
-            "total_needing_attention": total_boilerplate,
-            "total_nodes": total_nodes,
-        })
-
-    except Exception as e:
-        return json.dumps({"error": str(e)})
 
 
 def _execute_reveal_file(file_path: str) -> str:
@@ -1194,89 +932,6 @@ def _execute_edit_readme(
 
     except Exception as e:
         return f"Error editing README: {e}"
-
-
-def _execute_read_dreamnode(identifier: str) -> str:
-    """Read a DreamNode's README and metadata by title, folder name, or path.
-
-    Returns the full README content, metadata from .udd, and a file listing.
-    This is the detective's magnifying glass — use it to examine any node.
-    """
-    try:
-        node_dir = None
-
-        # Try as absolute path first
-        if identifier.startswith("/"):
-            candidate = Path(identifier)
-            if candidate.is_dir() and (candidate / ".udd").exists():
-                node_dir = candidate
-
-        # Try as folder name in vault
-        if node_dir is None:
-            candidate = VAULT_DIR / identifier
-            if candidate.is_dir() and (candidate / ".udd").exists():
-                node_dir = candidate
-
-        # Try fuzzy match on title/folder
-        if node_dir is None:
-            identifier_lower = identifier.lower()
-            for udd_path in VAULT_DIR.glob("*/.udd"):
-                folder = udd_path.parent.name
-                if folder.lower() == identifier_lower:
-                    node_dir = udd_path.parent
-                    break
-                try:
-                    udd = json.loads(udd_path.read_text())
-                    if udd.get("title", "").lower() == identifier_lower:
-                        node_dir = udd_path.parent
-                        break
-                except (json.JSONDecodeError, OSError):
-                    continue
-
-        if node_dir is None:
-            return f"DreamNode not found: {identifier!r}. Try search_dreamnodes to find it."
-
-        # Read metadata
-        udd = {}
-        udd_path = node_dir / ".udd"
-        if udd_path.exists():
-            try:
-                udd = json.loads(udd_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        # Read README
-        readme_path = node_dir / "README.md"
-        readme = "(no README.md)"
-        if readme_path.exists():
-            readme = readme_path.read_text(encoding="utf-8")
-            if len(readme) > 5000:
-                readme = readme[:5000] + "\n\n[...truncated at 5000 chars...]"
-
-        # List files (excluding .git)
-        files = []
-        for f in sorted(node_dir.iterdir()):
-            if f.name.startswith("."):
-                continue
-            if f.is_dir():
-                files.append(f"{f.name}/")
-            else:
-                files.append(f.name)
-
-        title = udd.get("title", node_dir.name)
-        node_id = udd.get("id", udd.get("uuid", ""))
-        node_type = udd.get("type", "dream")
-
-        result = f"**{title}** ({node_type})\n"
-        result += f"ID: {node_id}\n"
-        result += f"Path: {node_dir}\n"
-        result += f"Files: {', '.join(files)}\n"
-        result += f"\n--- README ---\n{readme}"
-
-        return result
-
-    except Exception as e:
-        return f"Error reading DreamNode: {e}"
 
 
 def _execute_search_dreamnodes(query: str, top_k: int = 8, include_readme: bool = False) -> str:
@@ -1450,23 +1105,7 @@ async def _dispatch_tool(
     request_id: str = "",
 ) -> str:
     """Dispatch a tool call and return the result as a string."""
-    if tool_name == "create_dreamnode":
-        return _execute_create_dreamnode(
-            title=tool_input.get("title", ""),
-            readme_content=tool_input.get("readme_content", ""),
-            node_type=tool_input.get("type", "dream"),
-        )
-    elif tool_name == "audit_garden":
-        return _execute_audit_garden(
-            filter_keyword=tool_input.get("filter", ""),
-            limit=tool_input.get("limit", 20),
-            include_shallow=tool_input.get("include_shallow", False),
-        )
-    elif tool_name == "read_dreamnode":
-        return _execute_read_dreamnode(
-            identifier=tool_input.get("identifier", ""),
-        )
-    elif tool_name == "search_dreamnodes":
+    if tool_name == "search_dreamnodes":
         return _execute_search_dreamnodes(
             query=tool_input.get("query", ""),
             top_k=tool_input.get("top_k", 8),
@@ -1705,255 +1344,6 @@ async def _stream_claude(
                 "type": "ai-inference-stream-error",
                 "requestId": request_id,
                 "error": str(e),
-                "partialContent": partial_content or None,
-            })
-        except ConnectionResetError:
-            pass
-
-
-# ============================================================
-# Claude CLI Backend — uses `claude -p` via Claude Max subscription
-# instead of direct API calls. No per-token cost.
-# ============================================================
-
-# Sandbox directory to prevent claude CLI from loading CLAUDE.md files
-# and MCP configs from the project tree (~50K token overhead → ~5K)
-_CLI_SANDBOX = Path("/tmp/auryn-inference-sandbox")
-
-
-def _find_claude_binary() -> str | None:
-    """Find the claude CLI binary, checking common locations."""
-    found = shutil.which("claude")
-    if found:
-        return found
-    for candidate in [
-        "/usr/local/bin/claude",
-        str(Path.home() / ".claude" / "local" / "claude"),
-    ]:
-        if Path(candidate).is_file():
-            return candidate
-    return None
-
-
-def _ensure_cli_sandbox() -> Path:
-    """Create a minimal sandbox directory to isolate claude CLI from project context.
-
-    Puts a .git/HEAD file to stop CLAUDE.md traversal up the directory tree.
-    This drops the overhead from ~50K tokens to ~5K tokens.
-    """
-    _CLI_SANDBOX.mkdir(parents=True, exist_ok=True)
-    git_dir = _CLI_SANDBOX / ".git"
-    git_dir.mkdir(exist_ok=True)
-    head_file = git_dir / "HEAD"
-    if not head_file.exists():
-        head_file.write_text("ref: refs/heads/main\n")
-    return _CLI_SANDBOX
-
-
-def _format_messages_as_prompt(messages: list[dict]) -> str:
-    """Format conversation history into a single prompt string for claude -p.
-
-    The claude CLI takes a single prompt via stdin. We format the message
-    history as a structured conversation so the model has full context.
-    """
-    parts = []
-    for m in messages:
-        role = m.get("role", "user")
-        content = m.get("content", "")
-        if role == "system":
-            continue  # system prompt passed separately via --system-prompt
-        elif role == "assistant":
-            parts.append(f"[assistant]\n{content}")
-        else:
-            parts.append(f"[user]\n{content}")
-    return "\n\n".join(parts)
-
-
-async def _stream_claude_cli(
-    ws: web.WebSocketResponse,
-    request_id: str,
-    messages: list[dict],
-    model: str,
-) -> None:
-    """Stream inference from Claude CLI (`claude -p`) and relay over WebSocket.
-
-    Uses the Claude Max subscription via the CLI binary instead of direct
-    API calls. No per-token cost.
-
-    Limitations:
-    - No tool calling support (search_dreamnodes, edit_readme, etc.).
-      The CLI subprocess runs in an isolated sandbox without AURYN tools.
-      Tool calling can be added later by including tool descriptions in the
-      system prompt and parsing the CLI output for tool use blocks.
-    - Text arrives as a single burst per assistant turn (not token-by-token),
-      because `claude -p --output-format stream-json` emits complete text
-      in one JSON line. We chunk it into ~80-char pieces for smoother UI
-      rendering.
-    """
-    claude_bin = _find_claude_binary()
-    if not claude_bin:
-        await ws.send_json({
-            "type": "ai-inference-stream-error",
-            "requestId": request_id,
-            "error": "Claude CLI binary not found. Install Claude Code or set it on PATH.",
-        })
-        return
-
-    sandbox = _ensure_cli_sandbox()
-
-    # Extract system prompt from messages
-    system_prompt = ""
-    for m in messages:
-        if m.get("role") == "system":
-            system_prompt = m.get("content", "")
-            break
-
-    # Format conversation history into a single prompt
-    prompt_text = _format_messages_as_prompt(messages)
-    if not prompt_text.strip():
-        prompt_text = "(empty message)"
-
-    # Build command
-    cmd = [claude_bin, "-p", "--output-format", "stream-json", "--verbose", "--max-turns", "1"]
-    if system_prompt:
-        cmd.extend(["--system-prompt", system_prompt])
-
-    env = os.environ.copy()
-    env.pop("CLAUDECODE", None)  # Allow nested sessions
-
-    partial_content = ""
-    proc = None
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(sandbox),
-            env=env,
-        )
-
-        # Send prompt via stdin and close
-        proc.stdin.write(prompt_text.encode("utf-8"))
-        await proc.stdin.drain()
-        proc.stdin.close()
-
-        # Read stdout line by line — each line is a JSON event
-        buffer = b""
-        usage_info = {}
-
-        async def read_with_timeout():
-            return await asyncio.wait_for(proc.stdout.read(4096), timeout=120)
-
-        while True:
-            try:
-                chunk = await read_with_timeout()
-            except asyncio.TimeoutError:
-                await ws.send_json({
-                    "type": "ai-inference-stream-error",
-                    "requestId": request_id,
-                    "error": "Claude CLI timed out after 120 seconds.",
-                    "partialContent": partial_content or None,
-                })
-                return
-            if not chunk:
-                break
-            buffer += chunk
-            while b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line.decode("utf-8", errors="replace"))
-                except json.JSONDecodeError:
-                    continue
-
-                etype = event.get("type")
-
-                if etype == "assistant":
-                    # Extract text from assistant message content blocks
-                    msg = event.get("message", {})
-                    content_blocks = msg.get("content", [])
-                    for block in content_blocks:
-                        if block.get("type") == "text":
-                            text = block.get("text", "")
-                            if text:
-                                partial_content += text
-                                # Send in chunks for smoother UI rendering
-                                chunk_size = 80
-                                for i in range(0, len(text), chunk_size):
-                                    await ws.send_json({
-                                        "type": "ai-inference-stream-chunk",
-                                        "requestId": request_id,
-                                        "chunk": text[i:i + chunk_size],
-                                    })
-
-                elif etype == "result":
-                    # Extract usage from result event
-                    result_usage = event.get("usage", {})
-                    usage_info = {
-                        "promptTokens": result_usage.get("input_tokens", 0)
-                            + result_usage.get("cache_read_input_tokens", 0)
-                            + result_usage.get("cache_creation_input_tokens", 0),
-                        "completionTokens": result_usage.get("output_tokens", 0),
-                    }
-                    if event.get("is_error"):
-                        error_msg = event.get("result", "Unknown CLI error")
-                        await ws.send_json({
-                            "type": "ai-inference-stream-error",
-                            "requestId": request_id,
-                            "error": error_msg,
-                            "partialContent": partial_content or None,
-                        })
-                        return
-
-        # Process remaining buffer
-        if buffer.strip():
-            try:
-                event = json.loads(buffer.decode("utf-8", errors="replace"))
-                if event.get("type") == "assistant":
-                    msg = event.get("message", {})
-                    for block in msg.get("content", []):
-                        if block.get("type") == "text":
-                            text = block.get("text", "")
-                            if text:
-                                partial_content += text
-                                await ws.send_json({
-                                    "type": "ai-inference-stream-chunk",
-                                    "requestId": request_id,
-                                    "chunk": text,
-                                })
-            except json.JSONDecodeError:
-                pass
-
-        await proc.wait()
-
-        await ws.send_json({
-            "type": "ai-inference-stream-done",
-            "requestId": request_id,
-            "provider": "claude-cli",
-            "model": model,
-            "usage": usage_info,
-        })
-
-    except asyncio.CancelledError:
-        if proc and proc.returncode is None:
-            try:
-                proc.terminate()
-                await asyncio.wait_for(proc.wait(), timeout=3)
-            except (ProcessLookupError, asyncio.TimeoutError):
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-    except Exception as e:
-        try:
-            await ws.send_json({
-                "type": "ai-inference-stream-error",
-                "requestId": request_id,
-                "error": f"Claude CLI error: {e}",
                 "partialContent": partial_content or None,
             })
         except ConnectionResetError:
@@ -2608,11 +1998,12 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                             "refined": False,
                         })
 
-                    # Send full transcript — single source of truth
-                    full_transcript = " ".join(mw["word"] for mw in moonshine_words)
+                    # Send immediately — this is the fast path
+                    chunk_text = " " + new_text if transcript_parts else new_text
                     await ws.send_json({
-                        "type": "transcript_full",
-                        "text": full_transcript,
+                        "type": "transcript_chunk",
+                        "text": chunk_text,
+                        "chunk_index": chunk_idx,
                         "stage": "moonshine",
                     })
                     transcript_parts.append(new_text)
@@ -2713,17 +2104,9 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                     whisper_text, unrefined_text
                 )
 
-                # Use precise alignment for gatekeeper input
+                # Use precise alignment — no chunk boundary snapping
                 aligned_word_entries = unrefined_words[align_start:align_end]
                 chunk_indices = sorted(set(mw["chunk_index"] for mw in aligned_word_entries))
-
-                # Also collect orphan words from touched chunks (words before/after
-                # the aligned range but in the same chunk). These will be consumed
-                # during replacement to prevent them persisting as duplicates.
-                all_chunk_words = [
-                    mw for mw in unrefined_words
-                    if mw["chunk_index"] in chunk_indices
-                ]
 
                 plog(f"[Alignment] Whisper ({len(whisper_text.split())}w) aligned to Moonshine ({align_end - align_start}w of {len(unrefined_words)}w unrefined, chunks {chunk_indices})")
                 plog(f"[Gatekeeper] Input A (Moonshine, chunks {chunk_indices}): {aligned_moon[:120]}...")
@@ -2755,43 +2138,23 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 if gatekeeper_result and gatekeeper_result["text"].strip():
                     refined = gatekeeper_result["text"].strip()
 
-                    # Replace all words from touched chunks with refined text
-                    # This consumes orphan words (filler/artifacts before/after
-                    # the aligned range) preventing them from persisting
-                    refined_word_list = refined.split()
-                    words_to_remove = all_chunk_words
-                    if words_to_remove:
-                        first_entry = words_to_remove[0]
-                        try:
-                            insert_pos = moonshine_words.index(first_entry)
-                        except ValueError:
-                            insert_pos = None
-                        if insert_pos is not None:
-                            # Remove all words from touched chunks
-                            for mw in words_to_remove:
-                                if mw in moonshine_words:
-                                    moonshine_words.remove(mw)
-                            # Insert refined words at the same position
-                            for i, word in enumerate(refined_word_list):
-                                moonshine_words.insert(insert_pos + i, {
-                                    "word": word,
-                                    "chunk_index": -1,
-                                    "refined": True,
-                                })
+                    # Mark aligned words as refined in moonshine_words
+                    for mw in aligned_word_entries:
+                        mw["refined"] = True
 
                     # Add to refined history for future context
                     refined_history.append(refined)
                     if len(refined_history) > 5:
                         refined_history.pop(0)
 
-                    # Send full transcript to UI — complete replacement, no splicing
-                    full_transcript = " ".join(mw["word"] for mw in moonshine_words)
-                    await ws.send_json({
-                        "type": "transcript_full",
-                        "text": full_transcript,
-                        "stage": "gatekeeper",
-                    })
+                    # Send correction to UI — text-based replacement
                     if refined != aligned_moon:
+                        await ws.send_json({
+                            "type": "transcript_correction",
+                            "find_text": aligned_moon,
+                            "replace_text": refined,
+                            "stage": "gatekeeper",
+                        })
                         _write_transcript_chunk(f"[refined] {refined}", start_time)
                         plog(f"[Gatekeeper] Correction: {refined[:80]}...")
 
@@ -3981,15 +3344,11 @@ async def serve(args: argparse.Namespace) -> None:
 
     ollama_models = get_ollama_models(args.ollama_url)
     claude_models = []
-    claude_cli_bin = _find_claude_binary()
     if claude_api_key:
         claude_models = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
-        print(f"  Claude:    {len(claude_models)} models available (API)")
-    elif claude_cli_bin:
-        claude_models = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
-        print(f"  Claude:    {len(claude_models)} models available (CLI fallback: {claude_cli_bin})")
+        print(f"  Claude:    {len(claude_models)} models available")
     else:
-        print("  Claude:    No API key or CLI found")
+        print("  Claude:    No API key found")
     all_models = []
     if args.model not in ollama_models and args.model not in claude_models:
         all_models.append(args.model)
