@@ -2406,33 +2406,71 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                     )
                     if wav_path:
                         try:
-                            prompt = vocab_prompt
-                            if transcript_parts:
-                                recent = transcript_parts[-1]
-                                prompt = vocab_prompt + ". " + recent if vocab_prompt else recent
+                            if pipeline_mode == "async":
+                                # Double-pass: same logic as periodic_whisper_async
+                                # Pass 1: transcribe with current vocab
+                                prompt1 = vocab_prompt
+                                if transcript_parts:
+                                    prompt1 = vocab_prompt + ". " + transcript_parts[-1] if vocab_prompt else transcript_parts[-1]
 
-                            # Use turbo model for async mode final pass
-                            final_repo = _whisper_async_repo if pipeline_mode == "async" else None
-                            result = await loop.run_in_executor(
-                                None,
-                                lambda: _transcribe_sync(wav_path, prompt, final_repo),
-                            )
+                                result1 = await loop.run_in_executor(
+                                    None,
+                                    lambda p=prompt1, w=wav_path: _transcribe_sync(w, p, _whisper_async_repo),
+                                )
+                                pass1_text = " ".join(
+                                    s["text"].strip() for s in result1["segments"]
+                                ).strip()
+                                pass1_text = _filter_hallucination(pass1_text)
 
-                            new_text = " ".join(
-                                s["text"].strip() for s in result["segments"]
-                            ).strip()
-                            new_text = _filter_hallucination(new_text)
-                            if new_text:
-                                new_text = await _process_new_text(new_text)
-                                transcript_parts.append(new_text)
-                                if pipeline_mode == "async":
-                                    full = " ".join(transcript_parts)
-                                    await ws.send_json({"type": "transcript_full", "text": full})
-                                else:
+                                if pass1_text:
+                                    plog(f"[Async Final] Pass 1: {pass1_text[:100]}...")
+                                    # Enrich vocab from pass 1
+                                    _update_ephemeral_vocab(pass1_text)
+                                    _rebuild_prompt()
+
+                                    # Pass 2: re-transcribe with enriched vocab
+                                    prompt2 = vocab_prompt
+                                    if transcript_parts:
+                                        prompt2 = vocab_prompt + ". " + transcript_parts[-1] if vocab_prompt else transcript_parts[-1]
+
+                                    result2 = await loop.run_in_executor(
+                                        None,
+                                        lambda p=prompt2, w=wav_path: _transcribe_sync(w, p, _whisper_async_repo),
+                                    )
+                                    new_text = " ".join(
+                                        s["text"].strip() for s in result2["segments"]
+                                    ).strip()
+                                    new_text = _filter_hallucination(new_text)
+
+                                    if new_text:
+                                        plog(f"[Async Final] Pass 2: {new_text[:100]}...")
+                                        new_text = await _process_new_text(new_text, notify_hits=True)
+                                        transcript_parts.append(new_text)
+                                        full = " ".join(transcript_parts)
+                                        await ws.send_json({"type": "transcript_full", "text": full})
+                                        _write_transcript_chunk(new_text, start_time)
+                                        await _send_vocab_state()
+                            else:
+                                # Sync mode: single pass with medium model
+                                prompt = vocab_prompt
+                                if transcript_parts:
+                                    prompt = vocab_prompt + ". " + transcript_parts[-1] if vocab_prompt else transcript_parts[-1]
+
+                                result = await loop.run_in_executor(
+                                    None,
+                                    lambda: _transcribe_sync(wav_path, prompt),
+                                )
+                                new_text = " ".join(
+                                    s["text"].strip() for s in result["segments"]
+                                ).strip()
+                                new_text = _filter_hallucination(new_text)
+                                if new_text:
+                                    new_text = await _process_new_text(new_text)
+                                    transcript_parts.append(new_text)
                                     chunk_text = " " + new_text if transcript_parts else new_text
                                     await ws.send_json({"type": "transcript_chunk", "text": chunk_text})
-                                _write_transcript_chunk(new_text, start_time)
-                                await _send_vocab_state()
+                                    _write_transcript_chunk(new_text, start_time)
+                                    await _send_vocab_state()
                         except Exception as e:
                             print(f"[Whisper] Final transcription error: {e}")
                         finally:
