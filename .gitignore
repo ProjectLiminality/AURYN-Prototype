@@ -19,3 +19,11 @@ dist/
 # Environment
 .env
 .env.local
+
+# Runtime data (local only)
+recordings/
+transcripts/
+chats/
+__pycache__/
+cert.pem
+key.pem
