@@ -12,7 +12,7 @@ AURYN is three things at once:
 
 1. **The template** - what makes a DreamNode a DreamNode (hooks, config, agentic essence)
 2. **The copilot** - semantic search, context awareness, voice-to-action
-3. **The interface** - MCP tools / CLI for AI agents to work with DreamNodes
+3. **The interface** - CLI subcommands for AI agents to work with DreamNodes (not MCP — CLI-first, composable in bash)
 
 When you create a new DreamNode, AURYN gives itself to creation. The template copies, the new node inherits AURYN's essence while AURYN remains whole. The strange loop.
 
@@ -51,26 +51,24 @@ AURYN's value is the cultivation layer itself, completely decoupled from any spe
 
 The token service is a convenience store attached to the garden. You don't need to grow the food to run the store, and you don't need the store to grow food. They're naturally decoupled. This means AURYN can position itself universally — it benefits from any tool's improvement because it sits at the layer above.
 
-## Current State (as of 2026-03-05)
+## Current State (as of 2026-03-16)
 
-AURYN is a fully functional MCP server with **35 tools** across 13 domains. All tools are implemented with proper error handling and graceful degradation (Ollama and Radicle failures are non-fatal). The codebase is clean TypeScript with zero TODOs or stubs.
+AURYN has two codebases: a TypeScript MCP server (`src/`, 35 tools) and a Python server + CLI (`aurin.py`, ~4000 lines). The Python server is the actively running system — it powers the chatbot, transcription, and all knowledge gardening operations. The TypeScript MCP server was the original prototype and is no longer actively used; the direction is CLI-first agentics where the LLM chains bash commands freely rather than calling MCP tools one by one.
 
-**What works now:**
-- DreamNode CRUD (create, read, update, delete)
-- Submodule relationships with bidirectional tracking (parent ↔ child)
-- Semantic search (fuzzy always + vector-based when Ollama available) with sliding window chunking
-- DreamSong weaving and reading (Obsidian canvas format)
-- Sub-agent loading (DreamNode as agent with scoped tools and cascading context)
-- Session spawning (open Claude Code in any DreamNode's context, macOS)
-- Liminal web relationships (Dream-to-Dreamer horizontal connections via liminal-web.json)
-- Pop-out to sovereign (promote local content to its own DreamNode with submodule replacement and DreamSong updates)
-- Merge DreamNodes (unify two nodes into one sovereign entity preserving both git histories and all cross-references)
-- Social resonance filter (Radicle publish/clone, peer sync, cherry-pick collaboration with full state machine, collaboration memory)
-- Coherence beacon (ignite/detect beacon commits after dreamweaving)
-- AURYN chatbot custom UI (`index.html`) with 3B1B write animation for streaming responses
-- Real-time voice transcription on desktop — mic button streams audio to InterBrain Mobile's Whisper server, transcript appears with write animation. Requires `InterBrain Mobile/server.py` running (dual-port: HTTPS 3001 for phone, HTTP 3002 for localhost Obsidian iframe)
-- AI Bridge WebSocket server (port 27182) inside InterBrain plugin — exposes LLM inference to external UIs without API keys, same protocol as iframe postMessage bridge. Standalone AURYN chatbot connects via this WebSocket
-- Drag-and-drop audio file transcription — drop audio files onto chatbot for Whisper processing with write animation
+**What works now (aurin.py — the running system):**
+- Chatbot UI (`index.html`, 2589 lines) with AURYN symbol, context petals, 3B1B write animation
+- 7 chatbot tools: `search_dreamnodes`, `edit_readme`, `run_claude_code`, `reveal_file`, `create_dreamnode`, `audit_garden`, `read_dreamnode`
+- Voice transcription (Whisper large-v3-turbo, async 30s chunks, vocabulary detection with double-pass)
+- Context provider: Tier 1 (vocabulary match, ~1ms) + Tier 2 (BM25, ~50-150ms) across ~523 DreamNodes
+- Knowledge gardening: route insights to DreamNode READMEs, audit garden for boilerplate READMEs, topical cluster-based auditing
+- Claude Code delegation (streaming, session continuity per directory)
+- Chat persistence (JSON, multi-session), file uploads with auto-cleanup
+- DreamNode catalog, README serving, file reveal to DreamSpace
+
+**What works (TypeScript MCP server — legacy, not actively used):**
+- 35 MCP tools across 13 domains (CRUD, submodules, semantic search, dreamweaving, cherry-pick, social resonance, coherence beacon, etc.)
+- All implemented with proper error handling, Ollama/Radicle graceful degradation
+- This codebase will be superseded by CLI subcommands in aurin.py
 
 **What's in progress (partially working, needs completion):**
 - Mobile voice transcription — working well over Tailscale (WiFi and LTE). Background mode confirmed working (screen off, phone in pocket). Hours-long stream-of-consciousness sessions tested successfully. Transcripts accumulate in daily markdown files. Custom UI inside InterBrain iframe not yet connecting (WebSocket failure), but standalone mobile access works
@@ -121,28 +119,22 @@ AURYN is a fully functional MCP server with **35 tools** across 13 domains. All 
 
 ```
 AURYN/
-├── README.md           # This file
-├── CLAUDE.md           # Agent instructions
-├── InterBrain/         # Git submodule (temporary - will flip in production)
-├── Software Gardening/ # Git submodule (philosophy)
-└── src/
-    ├── index.ts                    # MCP server entry point
+├── README.md              # This file — the DreamSong
+├── CLAUDE.md              # Instructions for Claude Code developing AURYN
+├── SYSTEM_PROMPT.md       # AURYN chatbot system prompt (knowledge gardening instructions)
+├── aurin.py               # Python server + CLI (~4000 lines) — THE running system
+├── index.html             # Chatbot UI (petals, write animation, voice)
+├── Software Gardening/    # Git submodule (philosophy)
+├── recordings/            # Voice recordings (local, gitignored)
+├── transcripts/           # Daily transcript markdown files (local, gitignored)
+├── chats/                 # Chat session history JSON (local, gitignored)
+└── src/                   # TypeScript MCP server (legacy — being superseded by CLI)
+    ├── index.ts
     ├── services/
-    │   └── standalone-adapter.ts   # All service implementations (~1180 lines)
     └── tools/
-        ├── foundation.ts           # CRUD operations
-        ├── submodule.ts            # Relationship management
-        ├── semantic.ts             # Search operations
-        ├── dreamweaving.ts         # Canvas generation
-        ├── agent-loader.ts         # Sub-agent management
-        ├── spawn-chat.ts           # Session spawning
-        ├── pop-out.ts              # Pop-out to sovereign
-        ├── merge.ts                # Merge DreamNodes
-        ├── liminal-web.ts          # Liminal web relationships
-        ├── social-resonance.ts     # Radicle ops + peer sync + collab memory
-        ├── cherry-pick.ts          # Cherry-pick workflow state machine
-        └── coherence-beacon.ts     # Beacon ignite/detect
 ```
+
+**Direction:** CLI-first agentics. `aurin.py` exposes composable CLI subcommands (`serve`, `context`, `index`) that the LLM chains in bash. The TypeScript MCP server's 35 tools will be replaced by CLI equivalents. The LLM gets maximum freedom to compose complex workflows in single bash expressions — no more one-tool-at-a-time MCP constraints.
 
 **Now**: AURYN imports InterBrain as submodule (for prototyping)
 **Future**: InterBrain imports AURYN as submodule (for production)
@@ -155,6 +147,34 @@ AURYN/
 2. **Filter for true relevance** - LLM reads each candidate's README, drops noise
 3. **Return the list** - you see which DreamNodes matter
 4. **Act with full knowledge** - AURYN helps with context loaded
+
+### README as DreamSong (Key Unification, March 2026)
+
+The distinction between READMEs and DreamSongs (canvas files) is artificial. The README IS the DreamSong — the agent-friendly, written-word format for dreamweaving. When a README references another DreamNode via `[Title](dreamnode://id)`, that IS the holarchic relationship. The DreamSong UI component should parse READMEs just as it parses canvas files, pulling in DreamTalk media as inline thumbnails (with carousel if multiple media files exist per DreamNode). Text reflows to share width with the image. Editing in the UI updates the README.
+
+This unification means: knowledge gardening (routing insights into READMEs) and dreamweaving (composing DreamSongs) are the same operation. AURYN does both through one flow. Canvas-based DreamSongs remain valid but README-based dreamweaving is the primary modality for agent-driven work.
+
+### Autonomous Knowledge Gardening Pipeline (Crystallized March 2026)
+
+AURYN is a collective knowledge gardening agent. Its core operation is a two-pass process:
+
+**Pass 1 — Intra-context research:** For each DreamNode, `read_dreamnode` provides a flash overview (README, metadata, file tree, git log oneline). Based on this triage:
+- If the README is boilerplate but files exist → spawn a Claude Code / agent-style init to study the context and produce a rich README
+- If the README is already meaningful → skip
+- If the DreamNode is empty → flag for deletion or user interview
+
+**Pass 2 — Inter-context research:** Once DreamNodes have meaningful READMEs, use each README to drive semantic search (`process_content`). This discovers clusters of related nodes. For each cluster:
+- Read all READMEs in the cluster simultaneously
+- Filter false positives (remember rejections so they're not re-proposed)
+- Accept related nodes, expand outward iteratively until natural cluster boundaries emerge
+- Derive holarchic relationships — memetic dependencies become submodule structure
+- Detect terms that appear across multiple READMEs → strong signal for pop-out to sovereign DreamNode
+
+**Cross-context term sovereignty:** If "symbiotic convergence" appears in three different DreamNode READMEs but has no DreamNode of its own, AURYN surfaces this: "This term is used across multiple contexts. Do you want to define it as its own DreamNode?" This is how the knowledge garden grows through use — not by pre-planning structure, but by detecting when sovereignty is warranted.
+
+**Adjacent possible cache:** AURYN maintains a cached "adjacent possible" memory — hashed DreamNodes, only re-audited on change. This is populated by a cron job (daily) and contains: harvest-ready DreamNodes, divergences (sovereign↔submodule, local↔remote), DreamTalk symbol gaps, to-do items parsed from READMEs, and incoming peer commits. The daily brief surfaces this.
+
+**Human in the loop:** The autonomous pipeline flags results as "needs user review." The user goes cluster by cluster, giving minimal feedback: "yes, that's correct" or "here's what's different." AURYN pre-processes 95% autonomously; the human provides the 5% that requires genuine discernment — sovereignty decisions, vision-axis changes, concept definitions.
 
 ### Two Axes of Resonance
 
