@@ -12,7 +12,16 @@ AURYN — voice-first knowledge gardening agent.
 Usage:
     uv run auryn.py serve [--port 8080] [--host 0.0.0.0] [--model qwen3:32b]
     uv run auryn.py context <file_or_text> [--top N] [--json] [--rebuild]
+    uv run auryn.py search <text> [--top N] [--json]           (alias for context)
     uv run auryn.py index [--force]
+    uv run auryn.py read <id|title|folder> [--deep]
+    uv run auryn.py write <id|title|folder> --old <text> --new <text> [--message <msg>]
+    uv run auryn.py create <title> [--readme <content>]
+    uv run auryn.py pop-out <parent> --title <name> --readme <content> --old <text> --new <text>
+    uv run auryn.py garden-state [--refresh]
+    uv run auryn.py reveal <file_path>
+    uv run auryn.py publish <id|title|folder>
+    uv run auryn.py clip <id|title|folder> --segments <json> --source <file>
 """
 
 import argparse
@@ -4023,6 +4032,639 @@ async def _run_claude_cli(args: argparse.Namespace) -> None:
         print(f"Cost: ${result['total_cost_usd']:.4f}")
 
 
+# ============================================================
+# CLI Subcommands — read, write, create, pop-out, garden-state,
+#                   reveal, publish, clip, search (alias)
+# ============================================================
+
+
+def _find_node(identifier: str) -> dict | None:
+    """Find a DreamNode by UUID, title, or folder name (case-insensitive)."""
+    nodes = discover_nodes()
+    id_lower = identifier.lower()
+    for node in nodes:
+        if node["uuid"] == identifier:
+            return node
+        if node["title"].lower() == id_lower:
+            return node
+        if node["folder"].lower() == id_lower:
+            return node
+    return None
+
+
+def _parse_udd(node_path: str) -> dict:
+    """Read and return the .udd file contents for a node directory."""
+    node_dir = Path(node_path)
+    udd_path = node_dir / ".udd"
+    if not udd_path.exists():
+        return {}
+    try:
+        return json.loads(udd_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _get_node_id(udd_data: dict) -> str:
+    """Get node ID from .udd, supporting both 'id' and 'uuid' keys."""
+    return udd_data.get("id", udd_data.get("uuid", ""))
+
+
+def _file_tree(node_dir: Path, depth: int = 1) -> list[str]:
+    """Return file tree entries 1 level deep."""
+    entries = []
+    try:
+        for item in sorted(node_dir.iterdir()):
+            name = item.name
+            if name.startswith(".") and name not in (".udd",):
+                continue
+            prefix = "d " if item.is_dir() else "f "
+            entries.append(prefix + name)
+    except OSError:
+        pass
+    return entries
+
+
+def _git_log_oneline(node_dir: Path, n: int = 5) -> list[str]:
+    """Return last N git commits as oneline strings."""
+    try:
+        result = subprocess.run(
+            ["git", "log", f"--oneline", f"-{n}"],
+            cwd=str(node_dir), capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return [l for l in result.stdout.strip().split("\n") if l]
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return []
+
+
+def _last_commit_timestamp(node_dir: Path) -> int:
+    """Return unix timestamp of last commit, or 0."""
+    try:
+        result = subprocess.run(
+            ["git", "log", "--format=%at", "-1"],
+            cwd=str(node_dir), capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return int(result.stdout.strip())
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
+    return 0
+
+
+def run_read(args: argparse.Namespace) -> None:
+    """CLI: auryn read <identifier> [--deep]"""
+    node = _find_node(args.identifier)
+    if not node:
+        print(f"DreamNode not found: {args.identifier}")
+        return
+
+    node_dir = Path(node["path"])
+    udd = _parse_udd(node["path"])
+
+    print(f"=== {node['title']} ===")
+    print(f"ID:     {node['uuid']}")
+    print(f"Type:   {node['type']}")
+    print(f"Folder: {node['folder']}")
+    print(f"Path:   {node['path']}")
+    if node.get("radicle_id"):
+        print(f"RID:    {node['radicle_id']}")
+    if udd.get("dreamTalk"):
+        print(f"DreamTalk: {udd['dreamTalk']}")
+
+    # Submodules/supermodules from .udd
+    if udd.get("submodules"):
+        print(f"\nSubmodules: {json.dumps(udd['submodules'], indent=2)}")
+    if udd.get("supermodules"):
+        print(f"\nSupermodules: {json.dumps(udd['supermodules'], indent=2)}")
+
+    # README
+    print("\n--- README.md ---")
+    if node["readme"]:
+        print(node["readme"])
+    else:
+        print("(no README)")
+
+    # File tree
+    print("\n--- File Tree (1 level) ---")
+    for entry in _file_tree(node_dir):
+        print(f"  {entry}")
+
+    # Git log
+    print("\n--- Recent Commits ---")
+    commits = _git_log_oneline(node_dir)
+    if commits:
+        for c in commits:
+            print(f"  {c}")
+    else:
+        print("  (no commits)")
+
+    # Deep mode: read key files
+    if getattr(args, "deep", False):
+        print("\n--- Deep Read ---")
+        read_files = []
+        for f in sorted(node_dir.iterdir()):
+            if f.name == "README.md":
+                continue  # already shown
+            if f.is_file() and (f.suffix == ".md" or f.name == "package.json"):
+                read_files.append(f)
+            if len(read_files) >= 5:
+                break
+        for f in read_files:
+            print(f"\n--- {f.name} ---")
+            try:
+                content = f.read_text(errors="replace")
+                # Truncate very long files
+                if len(content) > 5000:
+                    content = content[:5000] + "\n... (truncated)"
+                print(content)
+            except OSError as e:
+                print(f"  (error reading: {e})")
+
+
+def _extract_dreamnode_refs(readme_text: str) -> set[str]:
+    """Extract all dreamnode:// UUIDs from README text."""
+    return set(re.findall(r'dreamnode://([0-9a-f-]{36})', readme_text))
+
+
+def _sync_submodules_from_readme(node_dir: Path, udd_data: dict) -> None:
+    """
+    Compare dreamnode:// references in README to current submodules.
+    Add missing submodules, remove stale ones. Update .udd.
+    """
+    readme_path = node_dir / "README.md"
+    if not readme_path.exists():
+        return
+
+    readme_text = readme_path.read_text(errors="replace")
+    referenced_ids = _extract_dreamnode_refs(readme_text)
+
+    if not referenced_ids:
+        return
+
+    # Build lookup of all vault DreamNodes by UUID
+    all_nodes = discover_nodes()
+    id_to_node = {n["uuid"]: n for n in all_nodes}
+
+    # Get current submodule paths
+    current_submodules = set()
+    try:
+        result = subprocess.run(
+            ["git", "submodule", "status"],
+            cwd=str(node_dir), capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                if line.strip():
+                    # Format: " <hash> <path> (<desc>)" or "-<hash> <path>"
+                    parts = line.strip().lstrip("-+ ").split()
+                    if len(parts) >= 2:
+                        current_submodules.add(parts[1])
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+    # Map current submodule folder names to referenced IDs
+    current_sub_folders = {Path(s).name for s in current_submodules}
+
+    # Add new submodules for referenced DreamNodes not yet added
+    for ref_id in referenced_ids:
+        ref_node = id_to_node.get(ref_id)
+        if not ref_node:
+            print(f"  [warn] Referenced dreamnode://{ref_id} not found in vault")
+            continue
+        ref_folder = ref_node["folder"]
+        if ref_folder in current_sub_folders:
+            continue  # already a submodule
+
+        sovereign_path = Path(ref_node["path"])
+        if not sovereign_path.exists():
+            continue
+
+        print(f"  [submodule] Adding {ref_node['title']} ({ref_folder})")
+        try:
+            subprocess.run(
+                ["git", "submodule", "add", str(sovereign_path), ref_folder],
+                cwd=str(node_dir), capture_output=True, text=True, timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError) as e:
+            print(f"  [error] Failed to add submodule {ref_folder}: {e}")
+
+    # Update .udd submodules list with radicle IDs of referenced nodes
+    sub_rids = []
+    for ref_id in referenced_ids:
+        ref_node = id_to_node.get(ref_id)
+        if ref_node and ref_node.get("radicle_id"):
+            sub_rids.append(ref_node["radicle_id"])
+    if sub_rids:
+        udd_data["submodules"] = sorted(set(sub_rids))
+
+    # Write updated .udd
+    udd_path = node_dir / ".udd"
+    udd_path.write_text(json.dumps(udd_data, indent=2) + "\n")
+
+
+def run_write(args: argparse.Namespace) -> None:
+    """CLI: auryn write <identifier> --old <text> --new <text> --message <msg>"""
+    node = _find_node(args.identifier)
+    if not node:
+        print(f"DreamNode not found: {args.identifier}")
+        return
+
+    node_dir = Path(node["path"])
+    readme_path = node_dir / "README.md"
+
+    if not readme_path.exists():
+        print(f"No README.md found at {readme_path}")
+        return
+
+    content = readme_path.read_text(errors="replace")
+
+    if args.old not in content:
+        print(f"Error: old_text not found in README.md")
+        print(f"Searched for: {args.old[:200]}")
+        return
+
+    # Count occurrences to warn about ambiguity
+    count = content.count(args.old)
+    if count > 1:
+        print(f"Warning: old_text appears {count} times — replacing first occurrence only")
+
+    new_content = content.replace(args.old, args.new, 1)
+    readme_path.write_text(new_content)
+    print(f"README.md updated in {node['folder']}")
+
+    # Sync submodules from dreamnode:// references
+    udd_data = _parse_udd(node["path"])
+    _sync_submodules_from_readme(node_dir, udd_data)
+
+    # Auto-commit
+    commit_msg = getattr(args, "message", None) or f"Update README: {node['title']}"
+    try:
+        subprocess.run(["git", "add", "-A"], cwd=str(node_dir), capture_output=True, timeout=10)
+        subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=str(node_dir), capture_output=True, text=True, timeout=10,
+        )
+        print(f"Committed: {commit_msg}")
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"Warning: git commit failed: {e}")
+
+
+def _to_pascal_case(title: str) -> str:
+    """Convert a title to PascalCase folder name.
+    'Test Node' -> 'TestNode', 'my cool thing' -> 'MyCoolThing'
+    Already-PascalCase input is preserved: 'TestNode' -> 'TestNode'
+    """
+    # Remove non-alphanumeric except spaces and hyphens
+    cleaned = re.sub(r"[^\w\s-]", "", title)
+    # Split on spaces, hyphens, underscores
+    words = re.split(r"[\s_-]+", cleaned)
+    return "".join(w[0].upper() + w[1:] if w else "" for w in words)
+
+
+def run_create(args: argparse.Namespace) -> str | None:
+    """CLI: auryn create <title> [--readme <content>]. Returns new UUID or None."""
+    title = args.title
+    folder_name = _to_pascal_case(title)
+    node_dir = VAULT_DIR / folder_name
+
+    if node_dir.exists():
+        print(f"Error: Directory already exists: {node_dir}")
+        return None
+
+    readme_content = getattr(args, "readme", None) or f"# {title}\n"
+    new_id = str(uuid.uuid4())
+
+    # Create directory
+    node_dir.mkdir(parents=True)
+
+    # git init
+    subprocess.run(["git", "init"], cwd=str(node_dir), capture_output=True, timeout=10)
+
+    # Write .udd
+    udd_data = {
+        "uuid": new_id,
+        "title": title,
+        "type": "dream",
+    }
+    (node_dir / ".udd").write_text(json.dumps(udd_data, indent=2) + "\n")
+
+    # Write README.md
+    if not readme_content.startswith("#"):
+        readme_content = f"# {title}\n\n{readme_content}"
+    (node_dir / "README.md").write_text(readme_content)
+
+    # Copy LICENSE from AURYN template if exists
+    auryn_license = AURYN_DIR / "LICENSE"
+    if auryn_license.exists():
+        shutil.copy2(str(auryn_license), str(node_dir / "LICENSE"))
+
+    # Initial commit
+    subprocess.run(["git", "add", "-A"], cwd=str(node_dir), capture_output=True, timeout=10)
+    subprocess.run(
+        ["git", "commit", "-m", f"Plant seed: {title}"],
+        cwd=str(node_dir), capture_output=True, text=True, timeout=10,
+    )
+
+    print(f"Created DreamNode: {title}")
+    print(f"  ID:     {new_id}")
+    print(f"  Folder: {folder_name}")
+    print(f"  Path:   {node_dir}")
+    return new_id
+
+
+def run_pop_out(args: argparse.Namespace) -> None:
+    """CLI: auryn pop-out <parent_id> --title <name> --readme <content> --old <text> --new <text>"""
+    # Find parent
+    parent_node = _find_node(args.parent_id)
+    if not parent_node:
+        print(f"Parent DreamNode not found: {args.parent_id}")
+        return
+
+    # Create the new sovereign DreamNode
+    create_ns = argparse.Namespace(title=args.title, readme=args.readme)
+    new_id = run_create(create_ns)
+    if not new_id:
+        print("Failed to create new DreamNode")
+        return
+
+    # Now apply the diff to parent's README using write logic
+    # The new_text should include a dreamnode:// reference so write's hook wires the submodule
+    old_text = args.old
+    new_text = args.new
+    if f"dreamnode://{new_id}" not in new_text:
+        # Auto-inject the reference if the user didn't include it
+        new_text = new_text.replace("dreamnode://NEW_ID", f"dreamnode://{new_id}")
+
+    write_ns = argparse.Namespace(
+        identifier=args.parent_id,
+        old=old_text,
+        new=new_text,
+        message=f"Pop out: {args.title} -> sovereign DreamNode",
+    )
+    run_write(write_ns)
+    print(f"\nPop-out complete. New DreamNode ID: {new_id}")
+
+
+def run_garden_state(args: argparse.Namespace) -> None:
+    """CLI: auryn garden-state [--refresh]"""
+    nodes = discover_nodes()
+    now = time.time()
+
+    # Categorize READMEs
+    boilerplate = []
+    shallow = []
+    healthy = []
+
+    # DreamNodes missing DreamTalk
+    missing_dreamtalk = []
+
+    # To-dos with optional dates
+    todos: list[dict] = []
+
+    # Broken references
+    broken_refs: list[dict] = []
+
+    # Recently active (top 10)
+    node_activity: list[tuple[dict, int]] = []
+
+    # Stale with open todos (>30 days)
+    stale_with_todos: list[dict] = []
+
+    # Build ID lookup for reference checking
+    all_ids = {n["uuid"] for n in nodes}
+
+    for node in nodes:
+        node_dir = Path(node["path"])
+        readme = node["readme"]
+        udd = _parse_udd(node["path"])
+
+        # Classify README
+        meaningful_lines = [
+            l for l in readme.split("\n")
+            if l.strip() and not l.strip().startswith("#") and len(l.strip()) > 10
+        ]
+        if len(meaningful_lines) < 3:
+            boilerplate.append(node)
+        elif len(meaningful_lines) < 10:
+            shallow.append(node)
+        else:
+            healthy.append(node)
+
+        # DreamTalk check
+        if not udd.get("dreamTalk"):
+            missing_dreamtalk.append(node)
+
+        # To-do extraction
+        for line in readme.split("\n"):
+            match = re.match(r'\s*-\s*\[\s*\]\s*(.*)', line)
+            if match:
+                todo_text = match.group(1).strip()
+                # Try to find a date in the todo
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', todo_text)
+                todos.append({
+                    "dreamnode": node["title"],
+                    "folder": node["folder"],
+                    "todo": todo_text,
+                    "date": date_match.group(1) if date_match else None,
+                })
+
+        # Broken dreamnode:// references
+        refs = _extract_dreamnode_refs(readme)
+        for ref_id in refs:
+            if ref_id not in all_ids:
+                broken_refs.append({
+                    "dreamnode": node["title"],
+                    "folder": node["folder"],
+                    "broken_ref": ref_id,
+                })
+
+        # Activity timestamp
+        ts = _last_commit_timestamp(node_dir)
+        node_activity.append((node, ts))
+
+    # Sort by recency
+    node_activity.sort(key=lambda x: x[1], reverse=True)
+    recently_active = node_activity[:10]
+
+    # Stale with open todos (>30 days since last commit)
+    thirty_days_ago = now - (30 * 86400)
+    node_todos = {}
+    for t in todos:
+        node_todos.setdefault(t["folder"], []).append(t)
+
+    for node, ts in node_activity:
+        if ts > 0 and ts < thirty_days_ago and node["folder"] in node_todos:
+            stale_with_todos.append({
+                "dreamnode": node["title"],
+                "folder": node["folder"],
+                "last_commit": datetime.fromtimestamp(ts).strftime("%Y-%m-%d"),
+                "open_todos": len(node_todos[node["folder"]]),
+            })
+
+    # Write garden-state.md
+    output_path = AURYN_DIR / "garden-state.md"
+    lines = [
+        "# Garden State",
+        "",
+        "Auto-generated vault health report. Run `auryn garden-state --refresh` to regenerate.",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Total DreamNodes: {len(nodes)}",
+        "",
+    ]
+
+    # README health
+    lines.append("## README Health")
+    lines.append(f"- Healthy ({len(healthy)}): rich READMEs with 10+ meaningful lines")
+    lines.append(f"- Shallow ({len(shallow)}): 3-9 meaningful lines")
+    lines.append(f"- Boilerplate/Empty ({len(boilerplate)}): <3 meaningful lines")
+    lines.append("")
+
+    if boilerplate:
+        lines.append("### Boilerplate/Empty READMEs")
+        for n in sorted(boilerplate, key=lambda x: x["title"]):
+            lines.append(f"- {n['title']} (`{n['folder']}`)")
+        lines.append("")
+
+    # Missing DreamTalk
+    if missing_dreamtalk:
+        lines.append(f"## Missing DreamTalk ({len(missing_dreamtalk)})")
+        for n in sorted(missing_dreamtalk, key=lambda x: x["title"]):
+            lines.append(f"- {n['title']} (`{n['folder']}`)")
+        lines.append("")
+
+    # Open To-dos
+    if todos:
+        lines.append(f"## Open To-dos ({len(todos)})")
+        dated = [t for t in todos if t["date"]]
+        undated = [t for t in todos if not t["date"]]
+        if dated:
+            lines.append("### With Dates")
+            for t in sorted(dated, key=lambda x: x["date"]):
+                lines.append(f"- [{t['date']}] {t['dreamnode']}: {t['todo']}")
+        if undated:
+            lines.append("### Undated")
+            for t in sorted(undated, key=lambda x: x["dreamnode"]):
+                lines.append(f"- {t['dreamnode']}: {t['todo']}")
+        lines.append("")
+
+    # Broken references
+    if broken_refs:
+        lines.append(f"## Broken References ({len(broken_refs)})")
+        for r in broken_refs:
+            lines.append(f"- {r['dreamnode']}: dreamnode://{r['broken_ref']}")
+        lines.append("")
+
+    # Recently active
+    lines.append("## Recently Active (Top 10)")
+    for node, ts in recently_active:
+        if ts > 0:
+            date_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+            lines.append(f"- {node['title']} (`{node['folder']}`) — {date_str}")
+        else:
+            lines.append(f"- {node['title']} (`{node['folder']}`) — no commits")
+    lines.append("")
+
+    # Stale with todos
+    if stale_with_todos:
+        lines.append(f"## Stale DreamNodes with Open To-dos ({len(stale_with_todos)})")
+        for s in sorted(stale_with_todos, key=lambda x: x["last_commit"]):
+            lines.append(f"- {s['dreamnode']} — last commit: {s['last_commit']}, {s['open_todos']} open to-do(s)")
+        lines.append("")
+
+    report = "\n".join(lines) + "\n"
+    output_path.write_text(report)
+    print(f"Garden state written to {output_path}")
+    print(f"  {len(nodes)} DreamNodes: {len(healthy)} healthy, {len(shallow)} shallow, {len(boilerplate)} boilerplate")
+    if broken_refs:
+        print(f"  {len(broken_refs)} broken reference(s)")
+    if missing_dreamtalk:
+        print(f"  {len(missing_dreamtalk)} missing DreamTalk")
+
+
+def run_reveal(args: argparse.Namespace) -> None:
+    """CLI: auryn reveal <file_path>"""
+    file_path = str(Path(args.file_path).resolve())
+    output = json.dumps({"action": "reveal", "file_path": file_path})
+    print(output)
+
+
+def run_publish(args: argparse.Namespace) -> None:
+    """CLI: auryn publish <id>"""
+    node = _find_node(args.id)
+    if not node:
+        print(f"DreamNode not found: {args.id}")
+        return
+
+    node_dir = Path(node["path"])
+    udd = _parse_udd(node["path"])
+
+    if not udd.get("radicleId"):
+        print(f"No Radicle ID — initialize with `rad init` first")
+        print(f"  cd {node_dir} && rad init")
+        return
+
+    print(f"Publishing {node['title']} to Radicle...")
+    try:
+        result = subprocess.run(
+            ["git", "push", "rad", "main"],
+            cwd=str(node_dir), capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            print(f"Published successfully")
+            if result.stdout.strip():
+                print(result.stdout.strip())
+        else:
+            print(f"Push failed: {result.stderr.strip()}")
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"Error: {e}")
+
+
+def run_clip(args: argparse.Namespace) -> None:
+    """CLI: auryn clip <id> --segments <json_ranges> --source <file>"""
+    node = _find_node(args.id)
+    if not node:
+        print(f"DreamNode not found: {args.id}")
+        return
+
+    node_dir = Path(node["path"])
+    songlines_dir = node_dir / "songlines"
+    songlines_dir.mkdir(exist_ok=True)
+
+    # Parse segments
+    try:
+        segments = json.loads(args.segments)
+    except json.JSONDecodeError as e:
+        print(f"Error parsing segments JSON: {e}")
+        return
+
+    # Create clip metadata
+    clip_id = str(uuid.uuid4())[:8]
+    clip_data = {
+        "id": clip_id,
+        "dreamnode": node["uuid"],
+        "source": args.source,
+        "segments": segments,
+        "created_at": datetime.now().isoformat(),
+    }
+
+    clip_path = songlines_dir / f"clip-{clip_id}.json"
+    clip_path.write_text(json.dumps(clip_data, indent=2) + "\n")
+
+    # Commit
+    try:
+        subprocess.run(["git", "add", "-A"], cwd=str(node_dir), capture_output=True, timeout=10)
+        subprocess.run(
+            ["git", "commit", "-m", f"Add songline clip: {clip_id}"],
+            cwd=str(node_dir), capture_output=True, text=True, timeout=10,
+        )
+        print(f"Clip saved: {clip_path}")
+        print(f"  ID: {clip_id}")
+        print(f"  Segments: {json.dumps(segments)}")
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"Warning: git commit failed: {e}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="AURYN self-serving server + context provider")
     sub = parser.add_subparsers(dest="command")
@@ -4064,6 +4706,59 @@ def main() -> None:
     claude_parser.add_argument("--budget", type=float, default=0.50, help="Max budget USD")
     claude_parser.add_argument("--cwd", help="Working directory (session continues per directory)")
 
+    # --- search (alias for context) ---
+    search_parser = sub.add_parser("search", help="Search DreamNodes (alias for context)")
+    search_parser.add_argument("input", help="Text string or path to file")
+    search_parser.add_argument("--top", type=int, default=15, help="Max results (default: 15)")
+    search_parser.add_argument("--json", dest="json_output", action="store_true",
+                                help="Output as JSON")
+    search_parser.add_argument("--rebuild", action="store_true",
+                                help="Force rebuild index before searching")
+
+    # --- read ---
+    read_parser = sub.add_parser("read", help="Read a DreamNode by ID, title, or folder name")
+    read_parser.add_argument("identifier", help="UUID, title, or folder name")
+    read_parser.add_argument("--deep", action="store_true",
+                              help="Also read key .md files and package.json")
+
+    # --- write ---
+    write_parser = sub.add_parser("write", help="Edit a DreamNode's README with string replacement")
+    write_parser.add_argument("identifier", help="UUID, title, or folder name")
+    write_parser.add_argument("--old", required=True, help="Text to replace")
+    write_parser.add_argument("--new", required=True, help="Replacement text")
+    write_parser.add_argument("--message", default=None, help="Commit message")
+
+    # --- create ---
+    create_parser = sub.add_parser("create", help="Create a new DreamNode")
+    create_parser.add_argument("title", help="DreamNode title")
+    create_parser.add_argument("--readme", default=None, help="README content")
+
+    # --- pop-out ---
+    popout_parser = sub.add_parser("pop-out", help="Pop out content to a new sovereign DreamNode")
+    popout_parser.add_argument("parent_id", help="Parent DreamNode UUID, title, or folder")
+    popout_parser.add_argument("--title", required=True, help="New DreamNode title")
+    popout_parser.add_argument("--readme", required=True, help="README content for new node")
+    popout_parser.add_argument("--old", required=True, help="Text to replace in parent README")
+    popout_parser.add_argument("--new", required=True, help="Replacement text (include dreamnode://NEW_ID for auto-wiring)")
+
+    # --- garden-state ---
+    gs_parser = sub.add_parser("garden-state", help="Scan vault and write garden-state.md report")
+    gs_parser.add_argument("--refresh", action="store_true", help="Force rescan")
+
+    # --- reveal ---
+    reveal_parser = sub.add_parser("reveal", help="Print file path as JSON for UI consumption")
+    reveal_parser.add_argument("file_path", help="File path to reveal")
+
+    # --- publish ---
+    publish_parser = sub.add_parser("publish", help="Publish DreamNode to Radicle")
+    publish_parser.add_argument("id", help="DreamNode UUID, title, or folder name")
+
+    # --- clip ---
+    clip_parser = sub.add_parser("clip", help="Create a songline clip in a DreamNode")
+    clip_parser.add_argument("id", help="DreamNode UUID, title, or folder name")
+    clip_parser.add_argument("--segments", required=True, help="JSON array of time ranges")
+    clip_parser.add_argument("--source", required=True, help="Source file path")
+
     args = parser.parse_args()
 
     if args.command == "serve":
@@ -4082,6 +4777,24 @@ def main() -> None:
         asyncio.run(_run_garden_cli(args))
     elif args.command == "claude":
         asyncio.run(_run_claude_cli(args))
+    elif args.command == "search":
+        run_context(args)
+    elif args.command == "read":
+        run_read(args)
+    elif args.command == "write":
+        run_write(args)
+    elif args.command == "create":
+        run_create(args)
+    elif args.command == "pop-out":
+        run_pop_out(args)
+    elif args.command == "garden-state":
+        run_garden_state(args)
+    elif args.command == "reveal":
+        run_reveal(args)
+    elif args.command == "publish":
+        run_publish(args)
+    elif args.command == "clip":
+        run_clip(args)
     else:
         parser.print_help()
 
