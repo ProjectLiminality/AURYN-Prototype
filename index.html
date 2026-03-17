@@ -553,7 +553,7 @@ function formatAssistantText(text) {
 // ============================================================
 // 1b. DREAMNODE CATALOG
 // ============================================================
-// Fetch real catalog from aurin.py /catalog endpoint (scans vault .udd files).
+// Fetch real catalog from auryn.py /catalog endpoint (scans vault .udd files).
 // Falls back to InterBrain postMessage when in iframe.
 
 function requestDreamNodeCatalog() {
@@ -928,7 +928,7 @@ let aiBridgeWs = null;
 function getAIBridgeWsUrl() {
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   if (standaloneMode) {
-    // Served by aurin.py — use the same origin's /ws endpoint
+    // Served by auryn.py — use the same origin's /ws endpoint
     // which has the full agentic tool-calling loop
     return `${wsProtocol}//${window.location.host}${BASE_PATH}/ws`;
   }

@@ -53,9 +53,9 @@ The token service is a convenience store attached to the garden. You don't need 
 
 ## Current State (as of 2026-03-16)
 
-AURYN has two codebases: a TypeScript MCP server (`src/`, 35 tools) and a Python server + CLI (`aurin.py`, ~4000 lines). The Python server is the actively running system — it powers the chatbot, transcription, and all knowledge gardening operations. The TypeScript MCP server was the original prototype and is no longer actively used; the direction is CLI-first agentics where the LLM chains bash commands freely rather than calling MCP tools one by one.
+AURYN has two codebases: a TypeScript MCP server (`src/`, 35 tools) and a Python server + CLI (`auryn.py`, ~4000 lines). The Python server is the actively running system — it powers the chatbot, transcription, and all knowledge gardening operations. The TypeScript MCP server was the original prototype and is no longer actively used; the direction is CLI-first agentics where the LLM chains bash commands freely rather than calling MCP tools one by one.
 
-**What works now (aurin.py — the running system):**
+**What works now (auryn.py — the running system):**
 - Chatbot UI (`index.html`, 2589 lines) with AURYN symbol, context petals, 3B1B write animation
 - 7 chatbot tools: `search_dreamnodes`, `edit_readme`, `run_claude_code`, `reveal_file`, `create_dreamnode`, `audit_garden`, `read_dreamnode`
 - Voice transcription (Whisper large-v3-turbo, async 30s chunks, vocabulary detection with double-pass)
@@ -68,7 +68,7 @@ AURYN has two codebases: a TypeScript MCP server (`src/`, 35 tools) and a Python
 **What works (TypeScript MCP server — legacy, not actively used):**
 - 35 MCP tools across 13 domains (CRUD, submodules, semantic search, dreamweaving, cherry-pick, social resonance, coherence beacon, etc.)
 - All implemented with proper error handling, Ollama/Radicle graceful degradation
-- This codebase will be superseded by CLI subcommands in aurin.py
+- This codebase will be superseded by CLI subcommands in auryn.py
 
 **What's in progress (partially working, needs completion):**
 - Mobile voice transcription — working well over Tailscale (WiFi and LTE). Background mode confirmed working (screen off, phone in pocket). Hours-long stream-of-consciousness sessions tested successfully. Transcripts accumulate in daily markdown files. Custom UI inside InterBrain iframe not yet connecting (WebSocket failure), but standalone mobile access works
@@ -122,7 +122,7 @@ AURYN/
 ├── README.md              # This file — the DreamSong
 ├── CLAUDE.md              # Instructions for Claude Code developing AURYN
 ├── SYSTEM_PROMPT.md       # AURYN chatbot system prompt (knowledge gardening instructions)
-├── aurin.py               # Python server + CLI (~4000 lines) — THE running system
+├── auryn.py               # Python server + CLI (~4000 lines) — THE running system
 ├── index.html             # Chatbot UI (petals, write animation, voice)
 ├── Software Gardening/    # Git submodule (philosophy)
 ├── recordings/            # Voice recordings (local, gitignored)
@@ -134,7 +134,7 @@ AURYN/
     └── tools/
 ```
 
-**Direction:** CLI-first agentics. `aurin.py` exposes composable CLI subcommands (`serve`, `context`, `index`) that the LLM chains in bash. The TypeScript MCP server's 35 tools will be replaced by CLI equivalents. The LLM gets maximum freedom to compose complex workflows in single bash expressions — no more one-tool-at-a-time MCP constraints.
+**Direction:** CLI-first agentics. `auryn.py` exposes composable CLI subcommands (`serve`, `context`, `index`) that the LLM chains in bash. The TypeScript MCP server's 35 tools will be replaced by CLI equivalents. The LLM gets maximum freedom to compose complex workflows in single bash expressions — no more one-tool-at-a-time MCP constraints.
 
 **Now**: AURYN imports InterBrain as submodule (for prototyping)
 **Future**: InterBrain imports AURYN as submodule (for production)

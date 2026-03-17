@@ -73,55 +73,55 @@ AURYN provides: the DreamNode, the relevant transcript segment ranges, and the s
 
 ## CLI Tools
 
-All tools are subcommands of `aurin`, invoked via bash. AURYN composes them freely. All tools that operate on existing DreamNodes take UUID as the identifier (title is for human-facing conversation only; ID and title always travel together in context).
+All tools are subcommands of `auryn`, invoked via bash. AURYN composes them freely. All tools that operate on existing DreamNodes take UUID as the identifier (title is for human-facing conversation only; ID and title always travel together in context).
 
 ```
-aurin search <file_or_text> [--top N]
+auryn search <file_or_text> [--top N]
 ```
 Relevance realization. BM25 + vocabulary matching with sliding window for files. Returns ranked DreamNodes with relevance scores. Accepts file path or inline text.
 
 ```
-aurin read <id> [--deep]
+auryn read <id> [--deep]
 ```
 Returns .udd metadata + README + DreamSong.canvas (if non-trivial, topologically sorted) + file tree + last 5 git commits (oneline). With `--deep`: also returns contents of key files (README, markdown files, package.json, main entry points — heuristically selected).
 
 ```
-aurin write <id> --diff <diff>
+auryn write <id> --diff <diff>
 ```
 Edit a README. Diff-based (old text → new text). Downstream hooks fire automatically: detect new/removed `dreamnode://` references → clone/remove submodules → update .udd metadata. Auto-committed.
 
 ```
-aurin create <title> --readme <content>
+auryn create <title> --readme <content>
 ```
 Create a new sovereign DreamNode. Title is required, README content is required (must be meaningful — a dark DreamNode is useless). Tool handles: PascalCase folder name, git init, .udd with generated UUID, template files, Radicle init. Returns the new UUID.
 
 ```
-aurin merge <source_id> <target_id> --title <name> --readme <synthesized_content> [--confirm]
+auryn merge <source_id> <target_id> --title <name> --readme <synthesized_content> [--confirm]
 ```
 Merge two DreamNodes. Source is absorbed into target. Auto-detects absorb merge (source is submodule of target) vs. peer merge. Tool handles all 8 phases: validation, git history merge, identity, Radicle, cross-vault reference updates, cleanup. Reports affected DreamNodes for user awareness.
 
 ```
-aurin pop-out <parent_id> --title <name> --readme <content> --diff <parent_diff>
+auryn pop-out <parent_id> --title <name> --readme <content> --diff <parent_diff>
 ```
 Extract a concept from a parent into a new sovereign DreamNode. Tool handles: create sovereign, git init, submodule wiring, Radicle init, DreamSong canvas updates, context branch. Parent diff replaces inline content with `dreamnode://` reference.
 
 ```
-aurin clip <id> --segments <ranges> --source <file>
+auryn clip <id> --segments <ranges> --source <file>
 ```
 Attach songline clip provenance to a DreamNode. Segments are transcript ranges. Tool handles timestamp derivation and storage.
 
 ```
-aurin publish <id>
+auryn publish <id>
 ```
 Squash local commit history into meaningful units, push to Radicle remote. Curated signal, not raw experimentation.
 
 ```
-aurin reveal <file_path>
+auryn reveal <file_path>
 ```
 Open a file in the UI for the user. The containing DreamNode is automatically selected.
 
 ```
-aurin garden-state [--refresh]
+auryn garden-state [--refresh]
 ```
 Scan the garden, write `~/.auryn/garden-state.md`. Not called by AURYN directly — run by cron job. Details in Garden State section below.
 
@@ -160,12 +160,12 @@ The garden state mechanism serves two purposes: autonomous maintenance of garden
 Processes DreamNodes flagged in Phase 1 as needing LLM attention:
 
 *Pass 1 — Intra-context enrichment:*
-- **Dark DreamNodes** (boilerplate README, but has files): `aurin read --deep`, then draft a README from file analysis. Committed with `<!-- auryn-draft -->` marker.
+- **Dark DreamNodes** (boilerplate README, but has files): `auryn read --deep`, then draft a README from file analysis. Committed with `<!-- auryn-draft -->` marker.
 - **Dim DreamNodes** (some README content but shallow/outdated): read normally, suggest enrichments. Committed as draft.
 - **Unlit DreamNodes** (boilerplate README, no files): flagged for user interview — nothing to pre-process.
 
 *Pass 2 — Inter-context cluster discovery:*
-- For each DreamNode that Pass 1 just enriched: run `aurin search` using its new README
+- For each DreamNode that Pass 1 just enriched: run `auryn search` using its new README
 - Clusters emerge — DreamNodes whose READMEs share significant terms
 - For each cluster: read all READMEs together, propose structural relationships
 - **Boundary rule**: every proposed action must involve at least one DreamNode from the Pass 1 set. Existing coherent DreamNodes participate in cluster discovery as read-only context but are never themselves restructured. The existing garden is the stable crystallization surface.
@@ -227,6 +227,6 @@ The system prompt does NOT encode:
 ## What AURYN Is Not
 
 - Not a coding agent — generalized execution tools handle within-context work
-- Not a file system manipulator — all structural operations go through the `aurin` CLI
+- Not a file system manipulator — all structural operations go through the `auryn` CLI
 - Not a UI framework — the InterBrain UI is a separate concern; AURYN reads from and writes to it via reveal and UI state
 - Not a replacement for human vision — AURYN tends the garden, the human decides what to grow

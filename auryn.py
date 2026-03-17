@@ -7,12 +7,12 @@
 # ]
 # ///
 """
-AURYN self-serving server + fast context provider.
+AURYN — voice-first knowledge gardening agent.
 
 Usage:
-    uv run aurin.py serve [--port 8080] [--host 0.0.0.0] [--model qwen3:32b]
-    uv run aurin.py context <file_or_text> [--top N] [--json] [--rebuild]
-    uv run aurin.py index [--force]
+    uv run auryn.py serve [--port 8080] [--host 0.0.0.0] [--model qwen3:32b]
+    uv run auryn.py context <file_or_text> [--top N] [--json] [--rebuild]
+    uv run auryn.py index [--force]
 """
 
 import argparse
@@ -1288,7 +1288,7 @@ def _execute_search_dreamnodes(query: str, top_k: int = 8, include_readme: bool 
     try:
         index = load_index()
         if index is None:
-            return "No search index available. Run `aurin.py index` to build it."
+            return "No search index available. Run `auryn.py index` to build it."
 
         top_k = min(max(1, top_k), 20)
         results = context_search(query, index, top_k=top_k)
@@ -3731,7 +3731,7 @@ async def handle_reload(request: web.Request) -> web.Response:
         await asyncio.sleep(0.3)  # Let the HTTP response send
         pid = os.getpid()
         cmd_args = " ".join(sys.argv[1:])
-        script = f'while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; cd "{AURYN_DIR}" && uv run aurin.py {cmd_args} &'
+        script = f'while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; cd "{AURYN_DIR}" && uv run auryn.py {cmd_args} &'
         subprocess.Popen(["bash", "-c", script], start_new_session=True)
         os._exit(0)
 

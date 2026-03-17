@@ -10,7 +10,7 @@ After each meaningful change (file edit, feature implementation, bug fix), creat
 
 David may be accessing AURYN remotely — from a phone, a laptop on the road, or any situation where he cannot SSH in or manually intervene. This makes server health a critical responsibility.
 
-**Before making any changes**, think through whether they could interrupt the running server process. Changes to `aurin.py`, dependencies, config, or anything that affects the running process are high-stakes: if the server goes down and isn't brought back up cleanly, David loses all access and may be stranded with no way to recover.
+**Before making any changes**, think through whether they could interrupt the running server process. Changes to `auryn.py`, dependencies, config, or anything that affects the running process are high-stakes: if the server goes down and isn't brought back up cleanly, David loses all access and may be stranded with no way to recover.
 
 **After any change that touches server code or requires a restart:**
 - Stop the old process gracefully
