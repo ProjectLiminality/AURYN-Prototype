@@ -4303,11 +4303,11 @@ def _get_node_id(udd_data: dict) -> str:
 
 
 def _file_tree(node_dir: Path, depth: int = 1) -> list[str]:
-    """Return meaningful file tree using git to exclude ignored files.
+    """Return file tree diagram using git to exclude ignored files.
 
     All DreamNodes are git repos. Uses git ls-files to get tracked + untracked-
-    but-not-ignored files at full depth. Naturally excludes node_modules/, dist/,
-    __pycache__/, .git/, etc. Always includes .udd.
+    but-not-ignored files at full depth. Renders as a tree diagram with
+    box-drawing characters (├── └── │). Always includes .udd.
     """
     try:
         result = subprocess.run(
@@ -4315,12 +4315,44 @@ def _file_tree(node_dir: Path, depth: int = 1) -> list[str]:
             cwd=str(node_dir), capture_output=True, text=True, timeout=5,
         )
         files = sorted(result.stdout.strip().split("\n")) if result.stdout.strip() else []
-        # Always include .udd
         if (node_dir / ".udd").exists() and ".udd" not in files:
             files.insert(0, ".udd")
-        return [f"f {f}" for f in files if f]
+        files = [f for f in files if f]
+        if not files:
+            return []
+        return _render_tree(files)
     except (subprocess.TimeoutExpired, OSError):
         return []
+
+
+def _render_tree(file_paths: list[str]) -> list[str]:
+    """Render a list of file paths as a tree diagram."""
+    # Build nested dict structure
+    tree: dict = {}
+    for fp in file_paths:
+        parts = fp.split("/")
+        node = tree
+        for part in parts:
+            node = node.setdefault(part, {})
+
+    # Render recursively
+    lines: list[str] = []
+    _render_tree_node(tree, "", True, lines)
+    return lines
+
+
+def _render_tree_node(node: dict, prefix: str, is_root: bool, lines: list[str]) -> None:
+    items = sorted(node.keys())
+    for i, name in enumerate(items):
+        is_last = i == len(items) - 1
+        connector = "" if is_root else ("└── " if is_last else "├── ")
+        children = node[name]
+        if children:
+            lines.append(f"{prefix}{connector}{name}/")
+            extension = "" if is_root else ("    " if is_last else "│   ")
+            _render_tree_node(children, prefix + extension, False, lines)
+        else:
+            lines.append(f"{prefix}{connector}{name}")
 
 
 def _git_log_oneline(node_dir: Path, n: int = 5) -> list[str]:
