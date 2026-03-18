@@ -802,8 +802,8 @@ function renderPetals() {
 }
 
 function selectInDreamspace(nodeId) {
-  // postMessage to InterBrain parent to select and minimize AURYN
-  if (isInIframe) {
+  // Always try postMessage if in any iframe (even proxy mode)
+  if (window.parent !== window) {
     window.parent.postMessage({
       type: 'select-dreamnode',
       nodeId: nodeId,
@@ -1857,20 +1857,8 @@ function handleToolCallResult(toolName, result) {
     }
   }
 
-  // Find the most recent tool-call-block for this tool — now inside activeMsg.el
-  const container = (activeMsg && activeMsg.el) ? activeMsg.el : messagesEl;
-  const blocks = container.querySelectorAll('.tool-call-block[data-tool-name="' + toolName + '"]');
-  const block = blocks[blocks.length - 1];
-  if (!block) return;
-
-  // Clean up spinner and stop button
-  const spinner = block.querySelector('.cc-spinner');
-  if (spinner) spinner.remove();
-  const stopBtn = block.querySelector('.tool-stop-btn');
-  if (stopBtn) stopBtn.classList.add('hidden');
-
-  // Handle reveal_file results from auryn reveal commands
-  if (result) {
+  // Handle reveal_file results BEFORE block lookup (works even for silent/missing cards)
+  if (result && window.parent !== window) {
     try {
       const parsed = JSON.parse(result);
       if (parsed.action === 'reveal_file') {
@@ -1888,8 +1876,20 @@ function handleToolCallResult(toolName, result) {
         window.parent.postMessage(msg, '*');
         console.log('[AURYN] reveal_file →', msg);
       }
-    } catch (e) { /* not JSON or parse error — show as normal result */ }
+    } catch (e) { /* not JSON or parse error */ }
   }
+
+  // Find the most recent tool-call-block for this tool — now inside activeMsg.el
+  const container = (activeMsg && activeMsg.el) ? activeMsg.el : messagesEl;
+  const blocks = container.querySelectorAll('.tool-call-block[data-tool-name="' + toolName + '"]');
+  const block = blocks[blocks.length - 1];
+  if (!block) return;
+
+  // Clean up spinner and stop button
+  const spinner = block.querySelector('.cc-spinner');
+  if (spinner) spinner.remove();
+  const stopBtn = block.querySelector('.tool-stop-btn');
+  if (stopBtn) stopBtn.classList.add('hidden');
 
   // For auryn cards with pre-existing output details, fill them in
   const existingOutput = block.querySelector('.tool-output');

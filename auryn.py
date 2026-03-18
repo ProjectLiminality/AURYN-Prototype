@@ -4856,8 +4856,7 @@ def run_garden_state(args: argparse.Namespace) -> None:
 def run_reveal(args: argparse.Namespace) -> None:
     """CLI: auryn reveal <file_path>"""
     file_path = str(Path(args.file_path).resolve())
-    output = json.dumps({"action": "reveal", "file_path": file_path})
-    print(output)
+    print(_execute_reveal_file(file_path))
 
 
 def run_publish(args: argparse.Namespace) -> None:
