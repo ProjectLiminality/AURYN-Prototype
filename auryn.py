@@ -4417,7 +4417,7 @@ def run_read(args: argparse.Namespace) -> None:
         print("(no README)")
 
     # File tree
-    print("\n--- File Tree (1 level) ---")
+    print("\n--- File Tree ---")
     for entry in _file_tree(node_dir):
         print(f"  {entry}")
 
