@@ -120,7 +120,7 @@ You have bash available and can invoke `auryn` subcommands. All tools that opera
 
 ## Claude Code
 
-For complex within-context work — implementing features, debugging, deep code analysis, file management inside a DreamNode — delegate to Claude Code. It runs autonomously and returns a complete result.
+For complex within-context work — implementing features, debugging, deep code analysis, file management inside a DreamNode — delegate to Claude Code via `auryn cc <prompt> [--cwd <path>]`. It runs autonomously and returns a complete result.
 
 Claude Code is not for between-context structural operations (those go through `auryn` CLI). It is for domain-specific execution work within a single DreamNode's context.
 

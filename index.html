@@ -353,13 +353,13 @@
     position: fixed; top: 8px; right: 8px; z-index: 9999;
     display: flex; align-items: center; gap: 6px;
   }
-  #reload-btn, #clear-chat-btn, #pipeline-toggle {
+  #reload-btn, #clear-chat-btn, #pipeline-toggle, #history-btn {
     background: none; border: 1px solid #333; border-radius: 4px;
     color: #555; font-size: 12px; padding: 4px 10px; cursor: pointer;
     font-family: -apple-system, sans-serif; white-space: nowrap;
     min-height: 30px;
   }
-  #reload-btn:hover, #clear-chat-btn:hover, #pipeline-toggle:hover { color: #aaa; border-color: #555; }
+  #reload-btn:hover, #clear-chat-btn:hover, #pipeline-toggle:hover, #history-btn:hover { color: #aaa; border-color: #555; }
   #pipeline-toggle.active { color: #4a9a7a; border-color: #4a9a7a; }
 
   /* Vocab debug panel */
@@ -374,15 +374,123 @@
   #vocab-debug .vocab-core { color: #555; }
   #vocab-debug .vocab-pinned { color: #FFD700; }
   #vocab-debug .vocab-ephemeral { color: #4a7a9a; }
+
+  /* ===== AURYN COMMAND CARDS ===== */
+  .auryn-card {
+    width: 100%;
+    background: #0d1117; border-left: 3px solid #334;
+    border-radius: 6px; padding: 8px 12px; font-size: 0.85em;
+    color: #aaa; font-family: monospace;
+    margin: 4px 0;
+  }
+  .auryn-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .auryn-op-name { font-weight: bold; color: #d2a8ff; text-transform: uppercase; font-size: 0.8em; }
+  .auryn-thumbnails { display: flex; align-items: center; gap: 4px; }
+  .auryn-thumb { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 1px solid #333; }
+  .auryn-thumb-fallback {
+    width: 32px; height: 32px; border-radius: 50%; background: #1a1f2b;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: #888;
+  }
+  .auryn-arrow { color: #555; font-size: 14px; }
+  .auryn-connector { text-align: center; color: #555; padding: 2px 0; font-family: monospace; font-size: 11px; }
+  .auryn-compound { border: 1px solid #222; border-radius: 6px; padding: 6px; margin: 8px 0; }
+  .auryn-card details { margin-top: 4px; }
+  .auryn-card summary { cursor: pointer; opacity: 0.7; font-size: 11px; }
+  .auryn-card summary:hover { opacity: 1; }
+  .auryn-card pre {
+    white-space: pre-wrap; margin: 6px 0 0;
+    max-height: 300px; overflow-y: auto;
+    font-size: 0.9em; color: #ccc;
+    background: #0a0a0a; padding: 6px; border-radius: 4px;
+  }
+  .auryn-card .tool-output { color: #8b949e; }
+
+  /* ===== ATTACHMENT STAGING ===== */
+  #attachment-staging {
+    display: flex; gap: 8px; padding: 6px 8px; flex-wrap: wrap;
+    border-top: 1px solid #1a1a1a; background: #0a0a0a;
+  }
+  #attachment-staging:empty { display: none; }
+  .staged-file {
+    position: relative; width: 48px; height: 48px;
+    border-radius: 6px; overflow: hidden;
+    border: 1px solid #333; background: #111;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .staged-file img { width: 100%; height: 100%; object-fit: cover; }
+  .staged-file .remove-btn {
+    position: absolute; top: -4px; right: -4px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #c44; color: white; font-size: 10px;
+    cursor: pointer; border: none;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2;
+  }
+  .staged-file .upload-indicator {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: #aaa;
+  }
+  .staged-file .file-icon {
+    font-size: 18px; color: #666;
+  }
+  .staged-file .audio-icon { color: #7ee787; }
+  .staged-file .staged-label {
+    position: absolute; bottom: -14px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 8px; color: #555; white-space: nowrap;
+    max-width: 60px; overflow: hidden; text-overflow: ellipsis;
+    font-family: -apple-system, sans-serif;
+  }
+
+  /* ===== CHAT HISTORY PANEL ===== */
+  #chat-history-panel {
+    display: none; position: fixed;
+    top: 44px; right: 8px;
+    width: 280px; max-height: 400px;
+    background: #0d1117; border: 1px solid #333;
+    border-radius: 8px; z-index: 9998;
+    overflow-y: auto; padding: 4px;
+    font-family: -apple-system, sans-serif;
+    scrollbar-width: thin; scrollbar-color: #333 #0d1117;
+  }
+  #chat-history-panel.visible { display: block; }
+  #chat-history-panel::-webkit-scrollbar { width: 4px; }
+  #chat-history-panel::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  .chat-history-item {
+    padding: 8px 10px; border-radius: 6px;
+    cursor: pointer; margin: 2px 0;
+    font-size: 12px; color: #888;
+    transition: background 0.15s;
+  }
+  .chat-history-item:hover { background: #1a1f2b; color: #ccc; }
+  .chat-history-item.active { background: #1a2233; color: #7aadff; }
+  .chat-history-item .chat-time { color: #555; font-size: 10px; }
+  .chat-history-item .chat-preview {
+    color: #666; font-size: 11px; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .chat-history-new {
+    padding: 8px 10px; border-radius: 6px;
+    cursor: pointer; margin: 2px 0;
+    font-size: 12px; color: #7ee787;
+    text-align: center; border: 1px dashed #334;
+    transition: background 0.15s;
+  }
+  .chat-history-new:hover { background: #1a2b1a; }
 </style>
 </head>
 <body>
 <div id="connection-status"></div>
 <div id="top-toolbar">
 <button id="pipeline-toggle" class="active" onclick="togglePipeline()" title="Toggle transcription mode: async (high quality, 30s chunks) vs sync (real-time, lower quality)">async</button>
+<button id="history-btn" onclick="toggleChatHistory()" title="Chat history">history</button>
 <button id="clear-chat-btn" onclick="clearChat()" title="Clear chat (archives current thread)">clear</button>
 <button id="reload-btn" onclick="reloadServer()" title="Restart AURYN server">reload</button>
 </div>
+<div id="chat-history-panel"></div>
 
 <!-- CONTEXT ZONE: AURYN symbol + context petals -->
 <div id="context-zone">
@@ -395,6 +503,7 @@
 <!-- CHAT ZONE: messages + input -->
 <div id="chat-zone">
   <div id="messages"></div>
+  <div id="attachment-staging"></div>
   <div id="input-area">
     <div id="autocomplete"></div>
     <input type="file" id="attach-input" accept="image/*,audio/*,video/*,.pdf,.txt,.md,.json,.csv" style="display:none">
@@ -437,6 +546,11 @@ const attachInput = document.getElementById('attach-input');
 const fallbackEl = document.getElementById('fallback-msg');
 const dropOverlay = document.getElementById('drop-overlay');
 const connectionStatus = document.getElementById('connection-status');
+const attachmentStaging = document.getElementById('attachment-staging');
+const chatHistoryPanel = document.getElementById('chat-history-panel');
+
+// Attachment staging state
+let stagedFiles = []; // array of { id, file, serverPath, filename, size, type, uploading, transcribing, transcript }
 const autocompleteEl = document.getElementById('autocomplete');
 const petalsRing = document.getElementById('petals-ring');
 const aurynSymbol = document.getElementById('auryn-symbol');
@@ -480,7 +594,7 @@ You help users tend their knowledge garden: creating DreamNodes, weaving DreamSo
 
 When a file is added to context, you know its exact server path. You can:
 - Reference the file content in your responses
-- Use run_claude_code to move, rename, or route the file into a DreamNode if it belongs there
+- Use auryn cc to delegate file management tasks, or auryn write to route content into a DreamNode README
 - Treat it as ephemeral context if it's just informational
 
 The user doesn't need to decide upfront whether a file is temporary or permanent. Everything lands in context first. You intelligently determine if a file should be routed to a DreamNode based on the conversation.
@@ -640,24 +754,24 @@ function renderPetals() {
     petal.style.transform = `translate(${x}px, ${y}px)`;
     petal.title = node.title;
 
-    if (node.dreamTalkUrl) {
-      const img = document.createElement('img');
-      img.src = node.dreamTalkUrl;
-      img.alt = node.title;
-      img.onerror = () => {
+    // Try DreamTalk API first, then dreamTalkUrl, then initials fallback
+    const img = document.createElement('img');
+    const apiUrl = BASE_PATH + '/api/dreamtalk/' + encodeURIComponent(node.id || '');
+    img.src = node.dreamTalkUrl || apiUrl;
+    img.alt = node.title;
+    img.onerror = () => {
+      // If dreamTalkUrl was tried, try API; if API was tried, show initials
+      if (img.src !== apiUrl && node.dreamTalkUrl) {
+        img.src = apiUrl;
+      } else {
         img.remove();
         const initials = document.createElement('div');
         initials.className = 'petal-initials';
         initials.textContent = node.title.slice(0, 2).toUpperCase();
         petal.insertBefore(initials, petal.firstChild);
-      };
-      petal.appendChild(img);
-    } else {
-      const initials = document.createElement('div');
-      initials.className = 'petal-initials';
-      initials.textContent = node.title.slice(0, 2).toUpperCase();
-      petal.appendChild(initials);
-    }
+      }
+    };
+    petal.appendChild(img);
 
     // Label
     const label = document.createElement('div');
@@ -838,7 +952,7 @@ window.addEventListener('message', (e) => {
   if (d.type === 'ai-inference-stream-chunk') {
     appendChunk(d.chunk);
   } else if (d.type === 'tool-call-start') {
-    handleToolCallStart(d.tool_name, d.tool_input, d.cwd);
+    handleToolCallStart(d.tool_name, d.tool_input, d.cwd, d.auryn_meta);
   } else if (d.type === 'tool-call-result') {
     handleToolCallResult(d.tool_name, d.result);
   } else if (d.type === 'cc-activity') {
@@ -969,7 +1083,7 @@ function connectAIBridgeWs() {
       if (data.type === 'ai-inference-stream-chunk') {
         appendChunk(data.chunk);
       } else if (data.type === 'tool-call-start') {
-        handleToolCallStart(data.tool_name, data.tool_input, data.cwd);
+        handleToolCallStart(data.tool_name, data.tool_input, data.cwd, data.auryn_meta);
       } else if (data.type === 'tool-call-result') {
         handleToolCallResult(data.tool_name, data.result);
       } else if (data.type === 'cc-activity') {
@@ -1404,7 +1518,82 @@ function appendChunk(chunk) {
   appendChunkTo(activeMsg, chunk);
 }
 
-function handleToolCallStart(toolName, toolInput, cwd) {
+function _buildAurynCard(seg) {
+  const card = document.createElement('div');
+  card.className = 'auryn-card';
+  if (seg.subcommand) card.dataset.subcommand = seg.subcommand;
+
+  const header = document.createElement('div');
+  header.className = 'auryn-card-header';
+
+  const opName = document.createElement('span');
+  opName.className = 'auryn-op-name';
+  opName.textContent = seg.type === 'auryn' ? (seg.subcommand || 'auryn') : 'shell';
+  header.appendChild(opName);
+
+  // DreamNode thumbnails
+  if (seg.id_details && seg.id_details.length > 0) {
+    const thumbs = document.createElement('div');
+    thumbs.className = 'auryn-thumbnails';
+
+    seg.id_details.forEach((detail, i) => {
+      if (i > 0) {
+        const arrow = document.createElement('span');
+        arrow.className = 'auryn-arrow';
+        arrow.textContent = '\u2192';
+        thumbs.appendChild(arrow);
+      }
+      if (detail.dreamTalk) {
+        const img = document.createElement('img');
+        img.className = 'auryn-thumb';
+        img.src = BASE_PATH + '/api/dreamtalk/' + encodeURIComponent(detail.id);
+        img.title = detail.title || detail.id;
+        img.onerror = () => {
+          const fb = document.createElement('span');
+          fb.className = 'auryn-thumb-fallback';
+          fb.textContent = (detail.title || '??').slice(0, 2).toUpperCase();
+          fb.title = detail.title || detail.id;
+          img.replaceWith(fb);
+        };
+        thumbs.appendChild(img);
+      } else {
+        const fb = document.createElement('span');
+        fb.className = 'auryn-thumb-fallback';
+        fb.textContent = (detail.title || '??').slice(0, 2).toUpperCase();
+        fb.title = detail.title || detail.id;
+        thumbs.appendChild(fb);
+      }
+    });
+
+    header.appendChild(thumbs);
+  }
+
+  card.appendChild(header);
+
+  // Collapsible raw command
+  const cmdDetails = document.createElement('details');
+  const cmdSummary = document.createElement('summary');
+  cmdSummary.textContent = 'Command';
+  const cmdPre = document.createElement('pre');
+  cmdPre.textContent = seg.raw;
+  cmdDetails.appendChild(cmdSummary);
+  cmdDetails.appendChild(cmdPre);
+  card.appendChild(cmdDetails);
+
+  // Output placeholder (filled by handleToolCallResult)
+  const outDetails = document.createElement('details');
+  const outSummary = document.createElement('summary');
+  outSummary.textContent = 'Output';
+  const outPre = document.createElement('pre');
+  outPre.className = 'tool-output';
+  outDetails.appendChild(outSummary);
+  outDetails.appendChild(outPre);
+  card.appendChild(outDetails);
+
+  return card;
+}
+
+function handleToolCallStart(toolName, toolInput, cwd, aurynMeta) {
   if (!activeMsg) return;
 
   // Flush any pending animation state for the current text segment
@@ -1416,47 +1605,76 @@ function handleToolCallStart(toolName, toolInput, cwd) {
     flushWordFor(activeMsg);
   }
 
-  // Insert tool block INSIDE the assistant bubble
-  const block = document.createElement('div');
-  block.className = 'tool-call-block';
-  block.dataset.toolName = toolName;
+  const command = (toolName === 'bash') ? (toolInput.command || '') : '';
+  const isCC = command.match(/^auryn\s+cc\s+/);
+  const hasAurynMeta = aurynMeta && aurynMeta.segments && aurynMeta.segments.length > 0;
 
-  // Header with tool name + stop button
-  const header = document.createElement('div');
-  header.className = 'tool-header';
+  // Build the tool block
+  let block;
 
-  const nameEl = document.createElement('div');
-  nameEl.className = 'tool-name';
-  nameEl.textContent = '[' + toolName + ']';
-  header.appendChild(nameEl);
+  if (toolName === 'bash' && hasAurynMeta && !isCC) {
+    // Rich auryn command cards
+    if (aurynMeta.is_compound) {
+      // Compound command — container with sub-cards
+      block = document.createElement('div');
+      block.className = 'tool-call-block auryn-compound';
+      block.dataset.toolName = toolName;
 
-  if (toolName === 'run_claude_code') {
+      aurynMeta.segments.forEach((seg, idx) => {
+        if (idx > 0 && seg.connector) {
+          const conn = document.createElement('div');
+          conn.className = 'auryn-connector';
+          conn.textContent = seg.connector === 'pipe' ? '|' : '&&';
+          block.appendChild(conn);
+        }
+        block.appendChild(_buildAurynCard(seg));
+      });
+    } else {
+      // Single auryn command
+      const seg = aurynMeta.segments[0];
+      block = _buildAurynCard(seg);
+      block.classList.add('tool-call-block');
+      block.dataset.toolName = toolName;
+    }
+  } else if (toolName === 'bash' && isCC) {
+    // Claude Code card — same as before
+    block = document.createElement('div');
+    block.className = 'tool-call-block';
+    block.dataset.toolName = toolName;
+
+    const header = document.createElement('div');
+    header.className = 'tool-header';
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'tool-name';
+    nameEl.textContent = '[claude code]';
+    header.appendChild(nameEl);
+
     const spinner = document.createElement('span');
     spinner.className = 'cc-spinner';
     header.appendChild(spinner);
 
-    const stopBtn = document.createElement('button');
-    stopBtn.className = 'tool-stop-btn';
-    stopBtn.innerHTML = '&#9632;'; // square stop icon
-    stopBtn.title = 'Stop Claude Code';
-    stopBtn.addEventListener('click', () => {
+    const ccStopBtn = document.createElement('button');
+    ccStopBtn.className = 'tool-stop-btn';
+    ccStopBtn.innerHTML = '&#9632;';
+    ccStopBtn.title = 'Stop Claude Code';
+    ccStopBtn.addEventListener('click', () => {
       if (currentRequestId && aiBridgeWs && aiBridgeWs.readyState === WebSocket.OPEN) {
         aiBridgeWs.send(JSON.stringify({
           type: 'tool-call-cancel',
           requestId: currentRequestId
         }));
       }
-      stopBtn.classList.add('hidden');
+      ccStopBtn.classList.add('hidden');
       const sp = block.querySelector('.cc-spinner');
       if (sp) sp.remove();
     });
-    header.appendChild(stopBtn);
+    header.appendChild(ccStopBtn);
 
-    // "Open in Terminal" button — spawns claude --continue in the same cwd
     if (cwd) {
       const openBtn = document.createElement('button');
-      openBtn.className = 'tool-stop-btn'; // reuse styling
-      openBtn.innerHTML = '&#8599;'; // arrow NE
+      openBtn.className = 'tool-stop-btn';
+      openBtn.innerHTML = '&#8599;';
       openBtn.title = 'Open session in Terminal';
       openBtn.style.cssText = 'font-size:14px;';
       openBtn.addEventListener('click', () => {
@@ -1468,21 +1686,18 @@ function handleToolCallStart(toolName, toolInput, cwd) {
       });
       header.appendChild(openBtn);
     }
-  }
 
-  block.appendChild(header);
+    block.appendChild(header);
 
-  const inputDetails = document.createElement('details');
-  const inputSummary = document.createElement('summary');
-  inputSummary.textContent = 'Input';
-  const inputPre = document.createElement('pre');
-  inputPre.textContent = JSON.stringify(toolInput, null, 2);
-  inputDetails.appendChild(inputSummary);
-  inputDetails.appendChild(inputPre);
-  block.appendChild(inputDetails);
+    const inputDetails = document.createElement('details');
+    const inputSummary = document.createElement('summary');
+    inputSummary.textContent = 'Command';
+    const inputPre = document.createElement('pre');
+    inputPre.textContent = command;
+    inputDetails.appendChild(inputSummary);
+    inputDetails.appendChild(inputPre);
+    block.appendChild(inputDetails);
 
-  // Activity feed for Claude Code streaming events
-  if (toolName === 'run_claude_code') {
     const activityDetails = document.createElement('details');
     activityDetails.open = true;
     const activitySummary = document.createElement('summary');
@@ -1493,6 +1708,39 @@ function handleToolCallStart(toolName, toolInput, cwd) {
     activityDiv.className = 'cc-activity';
     activityDetails.appendChild(activityDiv);
     block.appendChild(activityDetails);
+  } else {
+    // Generic tool / non-auryn bash command — terminal-style card
+    block = document.createElement('div');
+    block.className = 'tool-call-block';
+    block.dataset.toolName = toolName;
+
+    const header = document.createElement('div');
+    header.className = 'tool-header';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'tool-name';
+    nameEl.textContent = toolName === 'bash' ? '$ ' + (command.length > 80 ? command.slice(0, 80) + '...' : command) : '[' + toolName + ']';
+    header.appendChild(nameEl);
+    block.appendChild(header);
+
+    if (toolName === 'bash') {
+      const inputDetails = document.createElement('details');
+      const inputSummary = document.createElement('summary');
+      inputSummary.textContent = 'Command';
+      const inputPre = document.createElement('pre');
+      inputPre.textContent = command;
+      inputDetails.appendChild(inputSummary);
+      inputDetails.appendChild(inputPre);
+      block.appendChild(inputDetails);
+    } else {
+      const inputDetails = document.createElement('details');
+      const inputSummary = document.createElement('summary');
+      inputSummary.textContent = 'Input';
+      const inputPre = document.createElement('pre');
+      inputPre.textContent = JSON.stringify(toolInput, null, 2);
+      inputDetails.appendChild(inputSummary);
+      inputDetails.appendChild(inputPre);
+      block.appendChild(inputDetails);
+    }
   }
 
   activeMsg.el.appendChild(block);
@@ -1562,8 +1810,8 @@ function handleToolCallResult(toolName, result) {
   const stopBtn = block.querySelector('.tool-stop-btn');
   if (stopBtn) stopBtn.classList.add('hidden');
 
-  // Handle reveal_file action — send message to parent app
-  if (toolName === 'reveal_file' && result) {
+  // Handle reveal_file results from auryn reveal commands
+  if (result) {
     try {
       const parsed = JSON.parse(result);
       if (parsed.action === 'reveal_file') {
@@ -1578,28 +1826,42 @@ function handleToolCallResult(toolName, result) {
           dreamnodeTitle: parsed.dreamnodeTitle,
           dreamnodeFolder: parsed.dreamnodeFolder,
         };
-        // Send to parent (iframe mode) or broadcast (standalone in iframe)
         window.parent.postMessage(msg, '*');
         console.log('[AURYN] reveal_file →', msg);
       }
     } catch (e) { /* not JSON or parse error — show as normal result */ }
   }
 
-  const resultDetails = document.createElement('details');
-  const resultSummary = document.createElement('summary');
-  resultSummary.textContent = 'Result';
-  const resultPre = document.createElement('pre');
-  resultPre.textContent = result || '(no output)';
-  resultDetails.appendChild(resultSummary);
-  resultDetails.appendChild(resultPre);
-  block.appendChild(resultDetails);
+  // For auryn cards with pre-existing output details, fill them in
+  const existingOutput = block.querySelector('.tool-output');
+  if (existingOutput) {
+    existingOutput.textContent = result || '(no output)';
+  } else if (block.classList.contains('auryn-compound')) {
+    // For compound commands, fill the last card's output
+    const cards = block.querySelectorAll('.auryn-card');
+    const lastCard = cards[cards.length - 1];
+    if (lastCard) {
+      const output = lastCard.querySelector('.tool-output');
+      if (output) output.textContent = result || '(no output)';
+    }
+  } else {
+    // Standard fallback — add result details
+    const resultDetails = document.createElement('details');
+    const resultSummary = document.createElement('summary');
+    resultSummary.textContent = 'Result';
+    const resultPre = document.createElement('pre');
+    resultPre.textContent = result || '(no output)';
+    resultDetails.appendChild(resultSummary);
+    resultDetails.appendChild(resultPre);
+    block.appendChild(resultDetails);
+  }
   scrollToBottom();
 }
 
 function handleCCActivity(event) {
   // Route Claude Code streaming events to the activity feed
   if (!activeMsg || !activeMsg.el) return;
-  const blocks = activeMsg.el.querySelectorAll('.tool-call-block[data-tool-name="run_claude_code"]');
+  const blocks = activeMsg.el.querySelectorAll('.tool-call-block[data-tool-name="bash"]');
   const block = blocks[blocks.length - 1];
   if (!block) return;
   const activityDiv = block.querySelector('.cc-activity');
@@ -1774,6 +2036,13 @@ function scrollToBottom() {
 // ============================================================
 async function sendMessage(text) {
   if (!text) text = inputEl.value.trim();
+
+  // Include staged files in the message
+  const stagedContext = getStagedContext();
+  if (stagedContext) {
+    text = text ? text + '\n\n' + stagedContext : stagedContext;
+  }
+
   if (!text || isStreaming) return;
 
   // Hide autocomplete on send
@@ -1785,6 +2054,9 @@ async function sendMessage(text) {
   messagesEl.appendChild(userMsg);
 
   conversation.push({ role: 'user', content: text });
+
+  // Clear staged files after sending
+  clearStaging();
 
   inputEl.value = '';
   inputEl.style.height = 'auto';
@@ -1804,7 +2076,7 @@ async function sendMessage(text) {
       .map(r => `--- ${r.title} README ---\n${r.readme}`)
       .join('\n\n');
     if (contextBlock) {
-      systemContent += '\n\n## Loaded DreamNode Context\n\nThe following DreamNode READMEs are loaded as context petals. Use these to answer questions and to route insights via edit_readme.\n\n' + contextBlock;
+      systemContent += '\n\n## Loaded DreamNode Context\n\nThe following DreamNode READMEs are loaded as context petals. Use these to answer questions and to route insights via auryn write.\n\n' + contextBlock;
     }
   }
 
@@ -2076,51 +2348,172 @@ document.addEventListener('drop', async (e) => {
   if (files.length === 0) return;
 
   for (const file of files) {
-    if (isAudioFile(file)) {
-      await transcribeFile(file);
-    } else {
-      await uploadFile(file);
-    }
+    stageFile(file);
   }
 });
 
-async function uploadFile(file) {
-  const label = document.createElement('div');
-  label.className = 'transcript-label';
-  label.textContent = `uploading: ${file.name}...`;
-  messagesEl.appendChild(label);
-  scrollToBottom();
+// ============================================================
+// ATTACHMENT STAGING
+// ============================================================
 
+function stageFile(file) {
+  const id = crypto.randomUUID();
+  const entry = {
+    id, file, serverPath: '', filename: file.name,
+    size: file.size, type: file.type,
+    uploading: true, transcribing: false, transcript: '',
+  };
+  stagedFiles.push(entry);
+  renderStaging();
+
+  // Upload immediately
+  const formData = new FormData();
+  formData.append('file', file);
+  fetch(BASE_PATH + '/upload', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(result => {
+      const uploaded = result.files[0];
+      entry.serverPath = uploaded.path;
+      entry.size = uploaded.size;
+      entry.uploading = false;
+      renderStaging();
+
+      // For audio files, auto-trigger transcription
+      if (isAudioFile(file)) {
+        entry.transcribing = true;
+        renderStaging();
+        transcribeFileStaged(entry);
+      }
+    })
+    .catch(err => {
+      entry.uploading = false;
+      console.warn('[AURYN] Upload failed:', err);
+      renderStaging();
+    });
+}
+
+async function transcribeFileStaged(entry) {
+  const url = getTranscriptionWsUrl();
   try {
-    const formData = new FormData();
-    formData.append('file', file);
+    const ws = new WebSocket(url);
+    const buffer = await entry.file.arrayBuffer();
 
-    const resp = await fetch(BASE_PATH + '/upload', { method: 'POST', body: formData });
-    if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
+    await new Promise((resolve, reject) => {
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'start_stream', filename: entry.filename, pipeline_mode: pipelineMode }));
+        ws.send(buffer);
+        ws.send(JSON.stringify({ type: 'end_stream' }));
+      };
 
-    const result = await resp.json();
-    const uploaded = result.files[0];
-    const sizeFmt = uploaded.size > 1024*1024
-      ? (uploaded.size / (1024*1024)).toFixed(1) + ' MB'
-      : (uploaded.size / 1024).toFixed(1) + ' KB';
+      ws.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.type === 'transcript_chunk') {
+          entry.transcript += data.text;
+          renderStaging();
+        } else if (data.type === 'stream_ended') {
+          entry.serverPath = data.file_path || entry.serverPath;
+          ws.close();
+          resolve();
+        }
+      };
 
-    label.textContent = `uploaded: ${file.name} (${sizeFmt})`;
+      ws.onerror = () => reject(new Error('Transcription failed'));
+      ws.onclose = () => resolve();
+    });
 
-    const contextText = `[File: ${uploaded.path}]\nOriginal name: ${file.name}\nSize: ${sizeFmt}`;
-    const userMsg = document.createElement('div');
-    userMsg.className = 'msg user';
-    userMsg.textContent = contextText;
-    messagesEl.appendChild(userMsg);
-    conversation.push({ role: 'user', content: contextText });
-    saveChat();
-    scrollToBottom();
+    entry.transcript = entry.transcript.trim();
+    entry.transcribing = false;
+    renderStaging();
   } catch (err) {
-    label.textContent = `upload error: ${file.name}`;
-    const errEl = document.createElement('div');
-    errEl.className = 'msg assistant';
-    errEl.textContent = err.message;
-    messagesEl.appendChild(errEl);
+    entry.transcribing = false;
+    console.warn('[AURYN] Transcription failed:', err);
+    renderStaging();
   }
+}
+
+function removeStagedFile(id) {
+  stagedFiles = stagedFiles.filter(f => f.id !== id);
+  renderStaging();
+}
+
+function renderStaging() {
+  attachmentStaging.innerHTML = '';
+  if (stagedFiles.length === 0) return;
+
+  stagedFiles.forEach(entry => {
+    const el = document.createElement('div');
+    el.className = 'staged-file';
+
+    if (entry.type && entry.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(entry.file);
+      el.appendChild(img);
+    } else if (isAudioFile(entry.file)) {
+      const icon = document.createElement('div');
+      icon.className = 'file-icon audio-icon';
+      icon.textContent = '\u266B'; // music note
+      el.appendChild(icon);
+    } else {
+      const icon = document.createElement('div');
+      icon.className = 'file-icon';
+      icon.textContent = '\u{1F4C4}';
+      el.appendChild(icon);
+    }
+
+    if (entry.uploading) {
+      const ind = document.createElement('div');
+      ind.className = 'upload-indicator';
+      ind.textContent = '\u21BB'; // uploading
+      el.appendChild(ind);
+    } else if (entry.transcribing) {
+      const ind = document.createElement('div');
+      ind.className = 'upload-indicator';
+      ind.textContent = '\u2026'; // transcribing...
+      el.appendChild(ind);
+    }
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'remove-btn';
+    removeBtn.textContent = '\u00D7';
+    removeBtn.addEventListener('click', () => removeStagedFile(entry.id));
+    el.appendChild(removeBtn);
+
+    const label = document.createElement('div');
+    label.className = 'staged-label';
+    label.textContent = entry.filename;
+    el.appendChild(label);
+
+    attachmentStaging.appendChild(el);
+  });
+}
+
+function getStagedContext() {
+  // Build context text from staged files for inclusion in the message
+  if (stagedFiles.length === 0) return '';
+  const parts = [];
+  for (const entry of stagedFiles) {
+    if (!entry.serverPath) continue; // not yet uploaded
+    const sizeFmt = entry.size > 1024*1024
+      ? (entry.size / (1024*1024)).toFixed(1) + ' MB'
+      : (entry.size / 1024).toFixed(1) + ' KB';
+
+    if (entry.transcript) {
+      parts.push(`[Audio: ${entry.serverPath}]\nOriginal: ${entry.filename} (${sizeFmt})\nTranscript:\n${entry.transcript}`);
+    } else {
+      parts.push(`[File: ${entry.serverPath}]\nOriginal: ${entry.filename} (${sizeFmt})`);
+    }
+  }
+  return parts.join('\n\n');
+}
+
+function clearStaging() {
+  stagedFiles = [];
+  renderStaging();
+}
+
+async function uploadFile(file) {
+  // Legacy function kept for compatibility — now stages instead
+  stageFile(file);
 }
 
 async function transcribeFile(file) {
@@ -2191,7 +2584,98 @@ async function transcribeFile(file) {
 }
 
 // ============================================================
-// 9b. KNOWLEDGE GARDENING
+// 9b. CHAT HISTORY BROWSER
+// ============================================================
+
+function toggleChatHistory() {
+  chatHistoryPanel.classList.toggle('visible');
+  if (chatHistoryPanel.classList.contains('visible')) {
+    loadChatHistory();
+  }
+}
+
+function loadChatHistory() {
+  fetch(BASE_PATH + '/chat/list')
+    .then(r => r.json())
+    .then(data => {
+      renderChatHistoryList(data.chats || []);
+    })
+    .catch(err => {
+      console.warn('[AURYN] Chat list failed:', err);
+      chatHistoryPanel.innerHTML = '<div style="padding:10px;color:#666;font-size:12px">Failed to load history</div>';
+    });
+}
+
+function renderChatHistoryList(chats) {
+  chatHistoryPanel.innerHTML = '';
+
+  // New chat button
+  const newBtn = document.createElement('div');
+  newBtn.className = 'chat-history-new';
+  newBtn.textContent = '+ New Chat';
+  newBtn.addEventListener('click', () => {
+    chatHistoryPanel.classList.remove('visible');
+    clearChat();
+  });
+  chatHistoryPanel.appendChild(newBtn);
+
+  if (chats.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'padding:10px;color:#555;font-size:12px;text-align:center';
+    empty.textContent = 'No chat history';
+    chatHistoryPanel.appendChild(empty);
+    return;
+  }
+
+  chats.forEach(chat => {
+    const item = document.createElement('div');
+    item.className = 'chat-history-item';
+    if (chat.threadId === chatThreadId) item.classList.add('active');
+
+    const time = document.createElement('div');
+    time.className = 'chat-time';
+    if (chat.savedAt) {
+      const d = new Date(chat.savedAt);
+      time.textContent = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    } else {
+      time.textContent = chat.filename;
+    }
+    item.appendChild(time);
+
+    if (chat.preview) {
+      const preview = document.createElement('div');
+      preview.className = 'chat-preview';
+      preview.textContent = chat.preview;
+      item.appendChild(preview);
+    }
+
+    item.addEventListener('click', () => {
+      chatHistoryPanel.classList.remove('visible');
+      switchToThread(chat.threadId);
+    });
+
+    chatHistoryPanel.appendChild(item);
+  });
+}
+
+function switchToThread(threadId) {
+  // Save current chat first
+  saveChat();
+  chatThreadId = threadId;
+  conversation = [];
+  messagesEl.innerHTML = '';
+  loadChat();
+}
+
+// Close chat history panel when clicking outside
+document.addEventListener('click', (e) => {
+  if (!chatHistoryPanel.contains(e.target) && e.target.id !== 'history-btn') {
+    chatHistoryPanel.classList.remove('visible');
+  }
+});
+
+// ============================================================
+// 9c. KNOWLEDGE GARDENING
 // ============================================================
 
 const SEND_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
@@ -2201,7 +2685,7 @@ let gardenWs = null;
 let isGardening = false;
 
 function updateSendButton() {
-  const hasText = inputEl.value.trim().length > 0;
+  const hasText = inputEl.value.trim().length > 0 || stagedFiles.length > 0;
   const hasContext = contextNodes.length > 0;
   if (!hasText && hasContext && !isStreaming && !isGardening) {
     sendBtn.innerHTML = GARDEN_ICON;
@@ -2468,7 +2952,7 @@ function reloadServer() {
 // ============================================================
 sendBtn.addEventListener('click', async () => {
   if (isRecording) await stopRecording();
-  const hasText = inputEl.value.trim().length > 0;
+  const hasText = inputEl.value.trim().length > 0 || stagedFiles.length > 0;
   if (hasText) {
     sendMessage();
   } else if (contextNodes.length > 0) {
@@ -2482,11 +2966,7 @@ attachInput.addEventListener('change', async () => {
   const files = [...attachInput.files];
   attachInput.value = ''; // reset so same file can be picked again
   for (const file of files) {
-    if (isAudioFile(file)) {
-      await transcribeFile(file);
-    } else {
-      await uploadFile(file);
-    }
+    stageFile(file);
   }
 });
 
@@ -2531,7 +3011,7 @@ inputEl.addEventListener('keydown', (e) => {
     e.preventDefault();
     (async () => {
       if (isRecording) await stopRecording();
-      const hasText = inputEl.value.trim().length > 0;
+      const hasText = inputEl.value.trim().length > 0 || stagedFiles.length > 0;
       if (hasText) {
         sendMessage();
       } else if (contextNodes.length > 0) {

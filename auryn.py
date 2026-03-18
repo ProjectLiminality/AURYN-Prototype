@@ -21,6 +21,7 @@ Usage:
     uv run auryn.py garden-state [--refresh]
     uv run auryn.py reveal <file_path>
     uv run auryn.py publish <id|title|folder>
+    uv run auryn.py cc <prompt> [--cwd <path>] [--budget <usd>]
     uv run auryn.py clip <id|title|folder> --segments <json> --source <file>
 """
 
@@ -718,194 +719,375 @@ async def _stream_ollama(
 
 AURYN_TOOLS = [
     {
-        "name": "search_dreamnodes",
+        "name": "bash",
         "description": (
-            "Search the DreamNode knowledge garden using BM25 + vocabulary matching. "
-            "Only use this when the user's question is about DreamNodes NOT already loaded as context petals. "
-            "If relevant DreamNodes are already in context, use that information directly. "
-            "Use this whenever the user asks about a topic, project, or concept that "
-            "might exist in the vault, or when you need context before answering."
+            "Execute a bash command. Use this for all operations: auryn CLI commands, "
+            "Claude Code delegation via `auryn cc`, and any other shell commands needed. "
+            "Commands run in the AURYN directory by default.\n\n"
+            "Available auryn subcommands:\n"
+            "- auryn search <query> [--top N] [--json] — Search DreamNodes by keyword/concept\n"
+            "- auryn read <id|title|folder> [--deep] — Read a DreamNode's README and metadata\n"
+            "- auryn write <id|title|folder> --old <text> --new <text> [--message <msg>] — Edit a DreamNode README\n"
+            "- auryn create <title> [--readme <content>] — Create a new DreamNode\n"
+            "- auryn pop-out <parent> --title <name> --readme <content> --old <text> --new <text> — Pop out to sovereign\n"
+            "- auryn reveal <file_path> — Show a file to the user in the DreamSpace viewer\n"
+            "- auryn garden-state [--refresh] — Scan vault health and write report\n"
+            "- auryn publish <id|title|folder> — Publish DreamNode to Radicle\n"
+            "- auryn cc <prompt> [--cwd <path>] [--budget <usd>] — Delegate task to Claude Code sub-agent\n"
+            "- auryn clip <id> --segments <json> --source <file> — Create a songline clip\n\n"
+            "You can chain commands with && or pipe with |. For complex file operations, "
+            "use auryn cc to delegate to Claude Code."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {
+                "command": {
                     "type": "string",
-                    "description": "The search query — keywords, concepts, or a natural language question.",
-                },
-                "top_k": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return (default 8, max 20).",
-                    "default": 8,
-                },
-                "include_readme": {
-                    "type": "boolean",
-                    "description": "If true, include the README content of each result (slower but richer).",
-                    "default": False,
+                    "description": "The bash command to execute.",
                 },
             },
-            "required": ["query"],
-        },
-    },
-    {
-        "name": "edit_readme",
-        "description": (
-            "Edit a DreamNode's README.md directly. Use this to route insights from conversation "
-            "into the appropriate DreamNode README. The DreamNode must be loaded as a context petal. "
-            "Provide the old text to replace and the new text. The edit is applied and auto-committed. "
-            "For appending to a section, use old_text as the last line of the section and new_text "
-            "as that line plus the new content. For rewriting a section, include the full section as old_text."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "dreamnode_path": {
-                    "type": "string",
-                    "description": "Absolute path to the DreamNode directory containing README.md.",
-                },
-                "old_text": {
-                    "type": "string",
-                    "description": "The exact text in the README to replace. Must match exactly (whitespace-sensitive).",
-                },
-                "new_text": {
-                    "type": "string",
-                    "description": "The replacement text. Must differ from old_text.",
-                },
-                "commit_message": {
-                    "type": "string",
-                    "description": "A concise commit message describing the insight being captured.",
-                },
-            },
-            "required": ["dreamnode_path", "old_text", "new_text", "commit_message"],
-        },
-    },
-    {
-        "name": "run_claude_code",
-        "description": (
-            "Delegate a task to Claude Code — a powerful sub-agent with full filesystem access, "
-            "bash execution, file editing, and deep codebase analysis. Use this for tasks that "
-            "require reading/writing files, running commands, or deep technical work in a DreamNode. "
-            "Claude Code runs autonomously and returns a complete result. "
-            "Only use when the task genuinely requires file system access or execution. "
-            "Sessions automatically continue per directory — Claude Code remembers previous work in each DreamNode."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "The full task description for Claude Code to execute.",
-                },
-                "dreamnode_path": {
-                    "type": "string",
-                    "description": "Absolute path to the DreamNode directory to work in (optional — defaults to AURYN root).",
-                },
-            },
-            "required": ["prompt"],
-        },
-    },
-    {
-        "name": "reveal_file",
-        "description": (
-            "Show a file to the user in the DreamSpace viewer. Use this to present "
-            "the results of your work — images, PDFs, text files, HTML pages, or any "
-            "file from the vault. The file opens fullscreen in the DreamSpace UI, and "
-            "the containing DreamNode is selected. This is how AURYN presents artifacts "
-            "to the user on their device."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "Absolute path to the file to reveal (must be inside the vault).",
-                },
-            },
-            "required": ["file_path"],
-        },
-    },
-    {
-        "name": "create_dreamnode",
-        "description": (
-            "Plant a new seed in the knowledge garden. Creates a DreamNode with git init, "
-            ".udd metadata, and initial README. Always propose to the user first and wait "
-            "for confirmation before calling this tool."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "title": {
-                    "type": "string",
-                    "description": "The DreamNode title (e.g. 'Zero Point Energy').",
-                },
-                "readme_content": {
-                    "type": "string",
-                    "description": "Initial README.md content. If empty, a minimal template is used.",
-                    "default": "",
-                },
-                "node_type": {
-                    "type": "string",
-                    "description": "DreamNode type: 'dream' (default) or 'dreamer'.",
-                    "default": "dream",
-                },
-            },
-            "required": ["title"],
-        },
-    },
-    {
-        "name": "audit_garden",
-        "description": (
-            "Scan the vault for DreamNodes needing attention: boilerplate/empty READMEs, "
-            "missing or invalid .udd metadata, schema issues. Use this to start a knowledge "
-            "gardening interview session. After getting results, do detective work before "
-            "asking the user about each node."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "keyword": {
-                    "type": "string",
-                    "description": "Optional keyword filter — only return nodes whose title/folder contains this string.",
-                    "default": "",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max number of results to return (default 20).",
-                    "default": 20,
-                },
-                "include_shallow": {
-                    "type": "boolean",
-                    "description": "Also include READMEs with some content but fewer than 5 meaningful lines.",
-                    "default": False,
-                },
-                "check_metadata": {
-                    "type": "boolean",
-                    "description": "Also check for .udd schema issues (missing fields, bad IDs, etc.).",
-                    "default": False,
-                },
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "read_dreamnode",
-        "description": (
-            "Read a DreamNode's README, metadata, and file listing. Use this for detective work — "
-            "examining a DreamNode's content without it being loaded as a petal. Accepts a title, "
-            "folder name, or absolute path. Returns the full README, .udd metadata, and file list."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "identifier": {
-                    "type": "string",
-                    "description": "DreamNode title, folder name, or absolute path.",
-                },
-            },
-            "required": ["identifier"],
+            "required": ["command"],
         },
     },
 ]
+
+
+# ============================================================
+# Bash command parser — extract auryn subcommands from bash strings
+# ============================================================
+
+# UUID pattern for DreamNode IDs
+_UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
+
+# Cache for node lookups (refreshed per request)
+_node_cache: dict[str, dict] | None = None
+_node_cache_time: float = 0
+
+
+def _get_node_cache() -> dict[str, dict]:
+    """Get or refresh the node cache (keyed by UUID)."""
+    global _node_cache, _node_cache_time
+    now = time.time()
+    if _node_cache is None or (now - _node_cache_time) > 30:  # refresh every 30s
+        nodes = discover_nodes()
+        _node_cache = {n["uuid"]: n for n in nodes if n["uuid"]}
+        _node_cache_time = now
+    return _node_cache
+
+
+def _parse_auryn_commands(command: str) -> dict:
+    """Parse a bash command string to extract auryn subcommands and metadata.
+
+    Splits on && (sequential) and | (pipe), respecting quotes.
+    For each segment, checks if it starts with 'auryn ' and extracts
+    subcommand name, involved DreamNode IDs, and the full segment text.
+    """
+    # Split on && and | while respecting quotes
+    segments = []
+    current = []
+    in_single = False
+    in_double = False
+    i = 0
+    chars = command
+
+    while i < len(chars):
+        c = chars[i]
+        if c == "'" and not in_double:
+            in_single = not in_single
+            current.append(c)
+        elif c == '"' and not in_single:
+            in_double = not in_double
+            current.append(c)
+        elif not in_single and not in_double:
+            if c == '&' and i + 1 < len(chars) and chars[i + 1] == '&':
+                seg_text = ''.join(current).strip()
+                if seg_text:
+                    connector = "sequential" if segments else None
+                    segments.append({"raw": seg_text, "connector": connector})
+                current = []
+                i += 2
+                continue
+            elif c == '|' and (i + 1 >= len(chars) or chars[i + 1] != '|'):
+                seg_text = ''.join(current).strip()
+                if seg_text:
+                    connector = "pipe" if segments else None
+                    segments.append({"raw": seg_text, "connector": connector})
+                current = []
+                i += 1
+                continue
+            else:
+                current.append(c)
+        else:
+            current.append(c)
+        i += 1
+
+    # Last segment
+    seg_text = ''.join(current).strip()
+    if seg_text:
+        connector = None
+        if segments:
+            # Determine connector from what came before
+            # We already set connectors above, so for the last segment
+            # we need to figure out what separated it
+            # The connector is set on the NEXT segment, so we check the gap
+            pass
+        segments.append({"raw": seg_text, "connector": None})
+
+    # Fix connectors: the connector describes what came BEFORE this segment
+    # Re-parse to get connectors right
+    result_segments = []
+    parts = []
+    current_text = []
+    connectors_list = []
+    in_single = False
+    in_double = False
+    i = 0
+
+    while i < len(chars):
+        c = chars[i]
+        if c == "'" and not in_double:
+            in_single = not in_single
+            current_text.append(c)
+        elif c == '"' and not in_single:
+            in_double = not in_double
+            current_text.append(c)
+        elif not in_single and not in_double:
+            if c == '&' and i + 1 < len(chars) and chars[i + 1] == '&':
+                parts.append(''.join(current_text).strip())
+                connectors_list.append("sequential")
+                current_text = []
+                i += 2
+                continue
+            elif c == '|' and (i + 1 >= len(chars) or chars[i + 1] != '|'):
+                parts.append(''.join(current_text).strip())
+                connectors_list.append("pipe")
+                current_text = []
+                i += 1
+                continue
+            else:
+                current_text.append(c)
+        else:
+            current_text.append(c)
+        i += 1
+
+    last_part = ''.join(current_text).strip()
+    if last_part:
+        parts.append(last_part)
+
+    # Build result segments
+    node_cache = _get_node_cache()
+
+    for idx, raw in enumerate(parts):
+        if not raw:
+            continue
+        connector = connectors_list[idx - 1] if idx > 0 and idx - 1 < len(connectors_list) else None
+        stripped = raw.strip()
+
+        # Check if this is an auryn command
+        is_auryn = stripped.startswith("auryn ") or stripped == "auryn"
+        subcommand = None
+        ids = []
+        id_details = []
+
+        if is_auryn:
+            # Extract subcommand (second word)
+            auryn_parts = stripped.split(None, 2)
+            if len(auryn_parts) >= 2:
+                subcommand = auryn_parts[1]
+
+            # Extract UUIDs
+            found_ids = _UUID_RE.findall(stripped)
+            for uid in found_ids:
+                uid_lower = uid.lower()
+                ids.append(uid_lower)
+                node = node_cache.get(uid_lower)
+                if node:
+                    # Find dreamTalk media path
+                    udd_path = Path(node["path"]) / ".udd"
+                    dreamtalk = ""
+                    try:
+                        udd_data = json.loads(udd_path.read_text())
+                        dreamtalk = udd_data.get("dreamTalk", "")
+                    except (OSError, json.JSONDecodeError):
+                        pass
+                    id_details.append({
+                        "id": uid_lower,
+                        "title": node["title"],
+                        "folder": node["folder"],
+                        "dreamTalk": dreamtalk,
+                    })
+                else:
+                    id_details.append({"id": uid_lower, "title": "", "folder": "", "dreamTalk": ""})
+
+        result_segments.append({
+            "type": "auryn" if is_auryn else "other",
+            "subcommand": subcommand,
+            "ids": ids,
+            "id_details": id_details,
+            "raw": raw,
+            "connector": connector,
+        })
+
+    return {
+        "segments": result_segments,
+        "is_compound": len(result_segments) > 1,
+    }
+
+
+# ============================================================
+# Bash tool executor
+# ============================================================
+
+async def _execute_bash(
+    command: str,
+    ws: "web.WebSocketResponse | None" = None,
+    request_id: str = "",
+) -> str:
+    """Execute a bash command and return the result.
+
+    Handles auryn cc specially by routing through run_claude_code_streaming.
+    All other commands run via asyncio.create_subprocess_shell.
+    """
+    global _last_cc_inject_index
+    command = command.strip()
+
+    # Check for auryn cc — route through Claude Code streaming
+    # Match: auryn cc <prompt>, auryn cc "<prompt>", auryn cc --cwd <path> <prompt>
+    cc_match = re.match(r'^auryn\s+cc\s+(.+)$', command, re.DOTALL)
+    if cc_match:
+        cc_args_str = cc_match.group(1).strip()
+
+        # Parse optional flags
+        cwd = None
+        budget = 0.50
+        model = "sonnet"
+
+        # Simple flag extraction
+        remaining = cc_args_str
+        cwd_match = re.search(r'--cwd\s+(\S+)', remaining)
+        if cwd_match:
+            cwd = cwd_match.group(1).strip('"').strip("'")
+            remaining = remaining[:cwd_match.start()] + remaining[cwd_match.end():]
+
+        budget_match = re.search(r'--budget\s+([0-9.]+)', remaining)
+        if budget_match:
+            budget = float(budget_match.group(1))
+            remaining = remaining[:budget_match.start()] + remaining[budget_match.end():]
+
+        model_match = re.search(r'--model\s+(\S+)', remaining)
+        if model_match:
+            model = model_match.group(1)
+            remaining = remaining[:model_match.start()] + remaining[model_match.end():]
+
+        prompt = remaining.strip().strip('"').strip("'")
+
+        # Use existing Claude Code execution with streaming
+        try:
+            is_auryn_local = not cwd or not Path(cwd).is_dir()
+            effective_cwd = str(AURYN_DIR) if is_auryn_local else cwd
+
+            # Delta injection for AURYN-local sessions
+            if is_auryn_local:
+                all_messages = _load_chat_messages()
+                if all_messages:
+                    if _last_cc_inject_index == 0:
+                        history = _format_messages_as_text(all_messages)
+                        label = "AURYN CHAT HISTORY"
+                    else:
+                        delta = all_messages[_last_cc_inject_index:]
+                        if delta:
+                            history = _format_messages_as_text(delta)
+                            label = "AURYN CHAT UPDATE (since last Claude Code call)"
+                        else:
+                            history = ""
+                            label = ""
+
+                    _last_cc_inject_index = len(all_messages)
+
+                    if history:
+                        prompt = (
+                            f"=== {label} ===\n"
+                            + history
+                            + f"\n=== END {label} ===\n\n"
+                            "Your directive:\n"
+                            + prompt
+                        )
+
+            final_result = ""
+            is_error = False
+            cost = 0.0
+            subtype = ""
+
+            async for event in run_claude_code_streaming(
+                prompt=prompt,
+                model=model,
+                max_budget=budget,
+                cwd=effective_cwd,
+                allowed_tools="Bash Read Edit Write Grep Glob",
+            ):
+                etype = event.get("type", "")
+
+                # Stream activity events to frontend
+                if ws and request_id:
+                    try:
+                        await ws.send_json({
+                            "type": "cc-activity",
+                            "requestId": request_id,
+                            "event": event,
+                        })
+                    except (ConnectionResetError, ConnectionError):
+                        pass
+
+                if etype == "result":
+                    final_result = event.get("result", "")
+                    is_error = event.get("is_error", False)
+                    subtype = event.get("subtype", "")
+                    cost = event.get("total_cost_usd", 0)
+
+            if subtype == "error_max_budget_usd":
+                return f"**Claude Code** hit session budget limit (${cost:.2f} accumulated)."
+
+            prefix = "**Claude Code error:**\n" if is_error else f"**Claude Code result** (${cost:.4f}):\n"
+            return prefix + (final_result or "(no output)")
+        except Exception as e:
+            return f"Claude Code execution error: {e}"
+
+    # Rewrite bare `auryn` commands to `uv run auryn.py`
+    # so Claude can use `auryn search ...` naturally
+    command = re.sub(r'\bauryn\b', f'uv run {AURYN_DIR}/auryn.py', command)
+
+    # For all other commands: run via subprocess
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(AURYN_DIR),
+        )
+
+        # Register so it can be killed on cancel
+        task_id = id(asyncio.current_task())
+        _active_cc_procs[task_id] = proc
+
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        finally:
+            _active_cc_procs.pop(task_id, None)
+
+        result_parts = []
+        if stdout:
+            result_parts.append(stdout.decode("utf-8", errors="replace"))
+        if stderr:
+            result_parts.append("STDERR:\n" + stderr.decode("utf-8", errors="replace"))
+        if proc.returncode != 0:
+            result_parts.append(f"\n(exit code: {proc.returncode})")
+
+        return "\n".join(result_parts) if result_parts else "(no output)"
+
+    except asyncio.TimeoutError:
+        return "Command timed out after 120 seconds."
+    except Exception as e:
+        return f"Command execution error: {e}"
 
 
 def _sanitize_to_pascal_case(title: str) -> str:
@@ -1370,92 +1552,6 @@ def _format_messages_as_text(messages: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-async def _execute_run_claude_code(
-    prompt: str,
-    dreamnode_path: str | None = None,
-    ws: "web.WebSocketResponse | None" = None,
-    request_id: str = "",
-) -> str:
-    """Execute run_claude_code tool with streaming observability.
-
-    If ws is provided, streams Claude Code activity events to the frontend.
-    Uses delta injection: first call gets full chat history, subsequent calls
-    get only messages since the last Claude Code invocation.
-    """
-    global _last_cc_inject_index
-    try:
-        is_auryn_local = not dreamnode_path or not Path(dreamnode_path).is_dir()
-        cwd = str(AURYN_DIR) if is_auryn_local else dreamnode_path
-
-        # In AURYN-local mode, inject chat history (full on first call, delta after)
-        if is_auryn_local:
-            all_messages = _load_chat_messages()
-            if all_messages:
-                if _last_cc_inject_index == 0:
-                    # First invocation: full history
-                    history = _format_messages_as_text(all_messages)
-                    label = "AURYN CHAT HISTORY"
-                else:
-                    # Subsequent: only new messages since last call
-                    delta = all_messages[_last_cc_inject_index:]
-                    if delta:
-                        history = _format_messages_as_text(delta)
-                        label = "AURYN CHAT UPDATE (since last Claude Code call)"
-                    else:
-                        history = ""
-                        label = ""
-
-                _last_cc_inject_index = len(all_messages)
-
-                if history:
-                    prompt = (
-                        f"=== {label} ===\n"
-                        + history
-                        + f"\n=== END {label} ===\n\n"
-                        "Your directive:\n"
-                        + prompt
-                    )
-
-        final_result = ""
-        is_error = False
-        cost = 0.0
-        subtype = ""
-
-        async for event in run_claude_code_streaming(
-            prompt=prompt,
-            model="sonnet",
-            max_budget=5.00,
-            cwd=cwd,
-            allowed_tools="Bash Read Edit Write Grep Glob",
-        ):
-            etype = event.get("type", "")
-
-            # Stream activity events to frontend
-            if ws and request_id:
-                try:
-                    await ws.send_json({
-                        "type": "cc-activity",
-                        "requestId": request_id,
-                        "event": event,
-                    })
-                except (ConnectionResetError, ConnectionError):
-                    pass
-
-            if etype == "result":
-                final_result = event.get("result", "")
-                is_error = event.get("is_error", False)
-                subtype = event.get("subtype", "")
-                cost = event.get("total_cost_usd", 0)
-
-        if subtype == "error_max_budget_usd":
-            return f"**Claude Code** hit session budget limit (${cost:.2f} accumulated). The continued session has used its budget — clear chat or start a fresh task."
-
-        prefix = "**Claude Code error:**\n" if is_error else f"**Claude Code result** (${cost:.4f}):\n"
-        return prefix + (final_result or "(no output)")
-    except Exception as e:
-        return f"Claude Code execution error: {e}"
-
-
 async def _dispatch_tool(
     tool_name: str,
     tool_input: dict,
@@ -1463,44 +1559,9 @@ async def _dispatch_tool(
     request_id: str = "",
 ) -> str:
     """Dispatch a tool call and return the result as a string."""
-    if tool_name == "search_dreamnodes":
-        return _execute_search_dreamnodes(
-            query=tool_input.get("query", ""),
-            top_k=tool_input.get("top_k", 8),
-            include_readme=tool_input.get("include_readme", False),
-        )
-    elif tool_name == "edit_readme":
-        return _execute_edit_readme(
-            dreamnode_path=tool_input.get("dreamnode_path", ""),
-            old_text=tool_input.get("old_text", ""),
-            new_text=tool_input.get("new_text", ""),
-            commit_message=tool_input.get("commit_message", "Update README"),
-        )
-    elif tool_name == "reveal_file":
-        return _execute_reveal_file(
-            file_path=tool_input.get("file_path", ""),
-        )
-    elif tool_name == "create_dreamnode":
-        return _execute_create_dreamnode(
-            title=tool_input.get("title", ""),
-            readme_content=tool_input.get("readme_content", ""),
-            node_type=tool_input.get("node_type", "dream"),
-        )
-    elif tool_name == "audit_garden":
-        return _execute_audit_garden(
-            keyword=tool_input.get("keyword", ""),
-            limit=tool_input.get("limit", 20),
-            include_shallow=tool_input.get("include_shallow", False),
-            check_metadata=tool_input.get("check_metadata", False),
-        )
-    elif tool_name == "read_dreamnode":
-        return _execute_read_dreamnode(
-            identifier=tool_input.get("identifier", ""),
-        )
-    elif tool_name == "run_claude_code":
-        return await _execute_run_claude_code(
-            prompt=tool_input.get("prompt", ""),
-            dreamnode_path=tool_input.get("dreamnode_path"),
+    if tool_name == "bash":
+        return await _execute_bash(
+            command=tool_input.get("command", ""),
             ws=ws,
             request_id=request_id,
         )
@@ -1517,8 +1578,9 @@ async def _stream_claude(
 ) -> None:
     """Stream inference from Claude API with native tool calling.
 
-    Implements an agentic loop: Claude can call search_dreamnodes and
-    run_claude_code autonomously, then streams its final response.
+    Implements an agentic loop: Claude can call bash commands (auryn CLI,
+    auryn cc for Claude Code delegation) autonomously, then streams its
+    final response.
     """
     if not api_key:
         await ws.send_json({
@@ -1675,11 +1737,19 @@ async def _stream_claude(
                         "tool_name": b["name"],
                         "tool_input": tool_input,
                     }
-                    # Include cwd for run_claude_code so frontend can offer "open in terminal"
-                    if b["name"] == "run_claude_code":
-                        dn_path = tool_input.get("dreamnode_path")
-                        is_local = not dn_path or not Path(dn_path).is_dir()
-                        start_msg["cwd"] = str(AURYN_DIR) if is_local else dn_path
+                    # For bash tool: parse auryn commands and include metadata
+                    if b["name"] == "bash":
+                        command = tool_input.get("command", "")
+                        auryn_meta = _parse_auryn_commands(command)
+                        start_msg["auryn_meta"] = auryn_meta
+                        # Include cwd for cc commands
+                        cc_match = re.match(r'^auryn\s+cc\s+', command)
+                        if cc_match:
+                            cwd_match = re.search(r'--cwd\s+(\S+)', command)
+                            if cwd_match:
+                                start_msg["cwd"] = cwd_match.group(1).strip('"').strip("'")
+                            else:
+                                start_msg["cwd"] = str(AURYN_DIR)
                     await ws.send_json(start_msg)
 
                     tool_result = await _dispatch_tool(b["name"], tool_input, ws=ws, request_id=request_id)
@@ -3105,6 +3175,73 @@ async def handle_chat_clear(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "archived": True})
 
 
+async def handle_chat_list(request: web.Request) -> web.Response:
+    """List all chat history files sorted by modification time (newest first)."""
+    if not CHATS_DIR.exists():
+        return web.json_response({"chats": []})
+
+    chats = []
+    for f in sorted(CHATS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if f.is_file() and f.suffix == ".json":
+            try:
+                data = json.loads(f.read_text())
+                messages = data.get("messages", [])
+                # Get first user message as preview
+                preview = ""
+                for msg in messages:
+                    if msg.get("role") == "user":
+                        preview = msg.get("content", "")[:100]
+                        break
+                chats.append({
+                    "threadId": data.get("threadId", f.stem),
+                    "filename": f.name,
+                    "savedAt": data.get("savedAt", ""),
+                    "messageCount": len(messages),
+                    "preview": preview,
+                    "mtime": f.stat().st_mtime,
+                })
+            except (json.JSONDecodeError, OSError):
+                continue
+
+    return web.json_response({"chats": chats})
+
+
+# ============================================================
+# DreamTalk Thumbnail API
+# ============================================================
+
+async def handle_dreamtalk(request: web.Request) -> web.StreamResponse:
+    """Serve a DreamNode's DreamTalk image by ID (UUID or folder name)."""
+    node_id = request.match_info.get("id", "")
+    if not node_id:
+        raise web.HTTPNotFound()
+
+    # Find the node
+    node = _find_node(node_id)
+    if not node:
+        raise web.HTTPNotFound()
+
+    node_path = Path(node["path"])
+    udd_path = node_path / ".udd"
+    if not udd_path.exists():
+        raise web.HTTPNotFound()
+
+    try:
+        udd = json.loads(udd_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        raise web.HTTPNotFound()
+
+    dreamtalk = udd.get("dreamTalk", "")
+    if not dreamtalk:
+        raise web.HTTPNotFound()
+
+    image_path = node_path / dreamtalk
+    if not image_path.is_file():
+        raise web.HTTPNotFound()
+
+    return web.FileResponse(image_path)
+
+
 # ============================================================
 # Network: Tailscale, SSL, IP detection
 # ============================================================
@@ -3872,6 +4009,8 @@ def create_app(
     app.router.add_post("/chat/save", handle_chat_save)
     app.router.add_get("/chat/load", handle_chat_load)
     app.router.add_post("/chat/clear", handle_chat_clear)
+    app.router.add_get("/chat/list", handle_chat_list)
+    app.router.add_get("/api/dreamtalk/{id}", handle_dreamtalk)
     app.router.add_post("/reload", handle_reload)
     app.router.add_get("/install-cert", handle_install_cert)
     app.router.add_get("/", handle_index)
@@ -4699,12 +4838,12 @@ def main() -> None:
                                help="DreamNode context as title:path pairs")
     garden_parser.add_argument("--input", help="Conversation text or file path (default: stdin)")
 
-    # --- claude ---
-    claude_parser = sub.add_parser("claude", help="Run Claude Code as sub-agent")
-    claude_parser.add_argument("prompt", help="Prompt for Claude Code")
-    claude_parser.add_argument("--model", default="sonnet", help="Model (default: sonnet)")
-    claude_parser.add_argument("--budget", type=float, default=0.50, help="Max budget USD")
-    claude_parser.add_argument("--cwd", help="Working directory (session continues per directory)")
+    # --- cc (Claude Code sub-agent) ---
+    cc_parser = sub.add_parser("cc", help="Delegate task to Claude Code sub-agent")
+    cc_parser.add_argument("prompt", help="Prompt for Claude Code")
+    cc_parser.add_argument("--model", default="sonnet", help="Model (default: sonnet)")
+    cc_parser.add_argument("--budget", type=float, default=0.50, help="Max budget USD")
+    cc_parser.add_argument("--cwd", help="Working directory (session continues per directory)")
 
     # --- search (alias for context) ---
     search_parser = sub.add_parser("search", help="Search DreamNodes (alias for context)")
@@ -4775,7 +4914,7 @@ def main() -> None:
         run_index(args)
     elif args.command == "garden":
         asyncio.run(_run_garden_cli(args))
-    elif args.command == "claude":
+    elif args.command == "cc":
         asyncio.run(_run_claude_cli(args))
     elif args.command == "search":
         run_context(args)
