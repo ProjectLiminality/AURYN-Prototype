@@ -4303,18 +4303,24 @@ def _get_node_id(udd_data: dict) -> str:
 
 
 def _file_tree(node_dir: Path, depth: int = 1) -> list[str]:
-    """Return file tree entries 1 level deep."""
-    entries = []
+    """Return meaningful file tree using git to exclude ignored files.
+
+    All DreamNodes are git repos. Uses git ls-files to get tracked + untracked-
+    but-not-ignored files at full depth. Naturally excludes node_modules/, dist/,
+    __pycache__/, .git/, etc. Always includes .udd.
+    """
     try:
-        for item in sorted(node_dir.iterdir()):
-            name = item.name
-            if name.startswith(".") and name not in (".udd",):
-                continue
-            prefix = "d " if item.is_dir() else "f "
-            entries.append(prefix + name)
-    except OSError:
-        pass
-    return entries
+        result = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            cwd=str(node_dir), capture_output=True, text=True, timeout=5,
+        )
+        files = sorted(result.stdout.strip().split("\n")) if result.stdout.strip() else []
+        # Always include .udd
+        if (node_dir / ".udd").exists() and ".udd" not in files:
+            files.insert(0, ".udd")
+        return [f"f {f}" for f in files if f]
+    except (subprocess.TimeoutExpired, OSError):
+        return []
 
 
 def _git_log_oneline(node_dir: Path, n: int = 5) -> list[str]:
