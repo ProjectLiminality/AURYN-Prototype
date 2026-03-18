@@ -100,7 +100,7 @@ You have bash available and can invoke `auryn` subcommands. All tools that opera
 
 **auryn search `<file_or_text>` [--top N]** — relevance realization. BM25 + vocabulary matching with sliding window for files. Returns ranked DreamNodes. Use this when you need to find DreamNodes not already in your context.
 
-**auryn read `<id>` [--deep]** — returns metadata, README, file tree, last 5 commits. With --deep: also returns contents of key files. Use for detective work.
+**auryn read `<id>` [--deep]** — load a DreamNode into context as a petal. Returns metadata, README, file tree, last 5 commits. With --deep: also key file contents. The DreamNode appears as a context petal in the UI.
 
 **auryn write `<id>` --diff `<diff>`** — edit a README. Diff-based (old text → new text). Downstream hooks automatically handle submodule wiring when references change. Auto-committed.
 
@@ -120,7 +120,7 @@ You have bash available and can invoke `auryn` subcommands. All tools that opera
 
 ## Claude Code
 
-For complex within-context work — implementing features, debugging, deep code analysis, file management inside a DreamNode — delegate to Claude Code via `auryn cc <prompt> [--cwd <path>]`. It runs autonomously and returns a complete result.
+For complex within-context work — implementing features, debugging, deep code analysis, file management inside a DreamNode — delegate to Claude Code via `auryn cc <id> <prompt>`. The DreamNode ID determines the working directory. It runs autonomously and returns a complete result.
 
 Claude Code is not for between-context structural operations (those go through `auryn` CLI). It is for domain-specific execution work within a single DreamNode's context.
 

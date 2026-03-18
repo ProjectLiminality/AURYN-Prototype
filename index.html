@@ -803,6 +803,8 @@ function selectInDreamspace(nodeId) {
       type: 'select-dreamnode',
       nodeId: nodeId
     }, '*');
+  } else if (aiBridgeWs && aiBridgeWs.readyState === WebSocket.OPEN) {
+    aiBridgeWs.send(JSON.stringify({ type: 'select-dreamnode', nodeId }));
   }
   console.log('[AURYN] Select in dreamspace:', nodeId);
 }
@@ -947,12 +949,30 @@ window.addEventListener('message', (e) => {
     return;
   }
 
+  // Handle petal-add events (from auryn read)
+  if (d.type === 'petal-add') {
+    const node = d.node;
+    const catalogNode = findCatalogNode(null, node.title, node.id);
+    if (catalogNode) {
+      addToContext(catalogNode);
+    } else {
+      addToContext({
+        id: node.id,
+        title: node.title,
+        type: node.type || 'dream',
+        repoPath: node.path || '',
+        dreamTalkUrl: ''
+      });
+    }
+    return;
+  }
+
   if (d.requestId !== currentRequestId) return;
 
   if (d.type === 'ai-inference-stream-chunk') {
     appendChunk(d.chunk);
   } else if (d.type === 'tool-call-start') {
-    handleToolCallStart(d.tool_name, d.tool_input, d.cwd, d.auryn_meta);
+    handleToolCallStart(d.tool_name, d.tool_input, d.cwd, d.auryn_meta, d.silent);
   } else if (d.type === 'tool-call-result') {
     handleToolCallResult(d.tool_name, d.result);
   } else if (d.type === 'cc-activity') {
@@ -1078,12 +1098,30 @@ function connectAIBridgeWs() {
         return;
       }
 
+      // Handle petal-add events (from auryn read)
+      if (data.type === 'petal-add') {
+        const node = data.node;
+        const catalogNode = findCatalogNode(null, node.title, node.id);
+        if (catalogNode) {
+          addToContext(catalogNode);
+        } else {
+          addToContext({
+            id: node.id,
+            title: node.title,
+            type: node.type || 'dream',
+            repoPath: node.path || '',
+            dreamTalkUrl: ''
+          });
+        }
+        return;
+      }
+
       if (data.requestId !== currentRequestId) return;
 
       if (data.type === 'ai-inference-stream-chunk') {
         appendChunk(data.chunk);
       } else if (data.type === 'tool-call-start') {
-        handleToolCallStart(data.tool_name, data.tool_input, data.cwd, data.auryn_meta);
+        handleToolCallStart(data.tool_name, data.tool_input, data.cwd, data.auryn_meta, data.silent);
       } else if (data.type === 'tool-call-result') {
         handleToolCallResult(data.tool_name, data.result);
       } else if (data.type === 'cc-activity') {
@@ -1593,8 +1631,23 @@ function _buildAurynCard(seg) {
   return card;
 }
 
-function handleToolCallStart(toolName, toolInput, cwd, aurynMeta) {
+function handleToolCallStart(toolName, toolInput, cwd, aurynMeta, silent) {
   if (!activeMsg) return;
+
+  // Silent tool calls (e.g. auryn read) — don't create a visible card
+  // The result still goes to the LLM; petal-add handles the UI side
+  if (silent) {
+    // Still track in accumulatedContent so tool result can be stored
+    if (activeMsg.accumulatedContent) {
+      activeMsg.accumulatedContent.push({
+        type: 'tool',
+        name: toolName,
+        input: toolInput,
+        output: null
+      });
+    }
+    return;
+  }
 
   // Flush any pending animation state for the current text segment
   if (activeMsg.mdParser) {
@@ -1787,13 +1840,7 @@ function handleToolCallStart(toolName, toolInput, cwd, aurynMeta) {
 }
 
 function handleToolCallResult(toolName, result) {
-  // Find the most recent tool-call-block for this tool — now inside activeMsg.el
-  const container = (activeMsg && activeMsg.el) ? activeMsg.el : messagesEl;
-  const blocks = container.querySelectorAll('.tool-call-block[data-tool-name="' + toolName + '"]');
-  const block = blocks[blocks.length - 1];
-  if (!block) return;
-
-  // Save tool output to accumulated content
+  // Save tool output to accumulated content (even for silent/cardless tools)
   if (activeMsg && activeMsg.accumulatedContent) {
     for (let i = activeMsg.accumulatedContent.length - 1; i >= 0; i--) {
       const item = activeMsg.accumulatedContent[i];
@@ -1803,6 +1850,12 @@ function handleToolCallResult(toolName, result) {
       }
     }
   }
+
+  // Find the most recent tool-call-block for this tool — now inside activeMsg.el
+  const container = (activeMsg && activeMsg.el) ? activeMsg.el : messagesEl;
+  const blocks = container.querySelectorAll('.tool-call-block[data-tool-name="' + toolName + '"]');
+  const block = blocks[blocks.length - 1];
+  if (!block) return;
 
   // Clean up spinner and stop button
   const spinner = block.querySelector('.cc-spinner');
