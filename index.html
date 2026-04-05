@@ -617,19 +617,25 @@ function _cliExec(cmd) {
   });
 }
 
-// Cross-iframe coordination: only one AURYN instance should be active at a time
+// Cross-iframe coordination: last instance to start wins (fullscreen panel beats DreamSong preview)
 const _aurynChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('auryn-instance') : null;
 let _isActiveInstance = false;
 
+function _goPassive() {
+  _isActiveInstance = false;
+  _serverStarted = false; // allow future takeover if needed
+  document.getElementById('chat-zone').style.display = 'none';
+  document.getElementById('context-zone').style.display = 'none';
+  connectionStatus.style.display = 'block';
+  connectionStatus.textContent = 'AURYN is open in another panel.';
+  connectionStatus.className = 'disconnected';
+}
+
 if (_aurynChannel) {
   _aurynChannel.onmessage = (e) => {
-    if (e.data === 'active' && !_isActiveInstance) {
-      // Another instance is active — show passive message and hide UI
-      document.getElementById('chat-zone').style.display = 'none';
-      document.getElementById('context-zone').style.display = 'none';
-      connectionStatus.style.display = 'block';
-      connectionStatus.textContent = 'AURYN is already open in another panel.';
-      connectionStatus.className = 'disconnected';
+    if (e.data === 'active' && _isActiveInstance) {
+      // A newer instance has taken over — yield to it
+      _goPassive();
     }
   };
 }
@@ -638,7 +644,7 @@ async function startAurynServer() {
   if (_serverStarted) return;
   _serverStarted = true;
 
-  // Claim this instance as active; any other open instance will defer
+  // Broadcast takeover — any existing instance yields to this one
   _isActiveInstance = true;
   if (_aurynChannel) _aurynChannel.postMessage('active');
 
