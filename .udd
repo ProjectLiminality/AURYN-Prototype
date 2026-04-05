@@ -1,24 +1,6 @@
 {
-  "uuid": "53a3bb7a-3df8-4f36-af99-23787a8cec25",
-  "title": "A U R Y N",
+  "uuid": "ecafc74f-bcc3-46df-9ab1-485199e356d8",
+  "title": "AURYN Prototype",
   "type": "dream",
-  "dreamTalk": "AURYN.jpg",
-  "radicleId": "rad:z4GJJ2Z8FZrz5Dhot6f9HZHFLH215",
-  "submodules": [
-    "rad:zJqVpsnnegqWgqY2sshQYnq8CkBR"
-  ],
-  "supermodules": [
-    {
-      "radicleId": "rad:zDvap1h3WQCkpDLwmszhkQfph5AY",
-      "title": "Spring Launch",
-      "atCommit": "",
-      "addedAt": 1770724364346
-    },
-    {
-      "radicleId": "rad:zDm6jgtBJhbC2iBkxSXHgubPi8pr",
-      "title": "Tutorial System",
-      "atCommit": "",
-      "addedAt": 1770744078377
-    }
-  ]
+  "dreamTalk": "AURYN.jpg"
 }
