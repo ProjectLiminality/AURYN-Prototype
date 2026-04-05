@@ -612,7 +612,8 @@ async function startAurynServer() {
 
   // uv lives in ~/.local/bin on this system; inject known locations into PATH
   const UV_PATH = '/Users/davidrug/.local/bin/uv';
-  const startCmd = `pkill -f "auryn.py serve" 2>/dev/null; sleep 0.3; ${UV_PATH} run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
+  // Kill anything on port 8080 (covers any prior auryn.py process regardless of how it was started)
+  const startCmd = `lsof -ti :8080 | xargs kill -9 2>/dev/null; sleep 0.5; ${UV_PATH} run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
   console.log('[AURYN] Starting server:', startCmd);
   const result = await _cliExec(startCmd);
   console.log('[AURYN] Server start out:', result.out);
