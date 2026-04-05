@@ -356,13 +356,13 @@
     position: fixed; top: 8px; right: 8px; z-index: 9999;
     display: flex; align-items: center; gap: 6px;
   }
-  #clear-chat-btn, #history-btn {
+  #reload-btn, #clear-chat-btn, #history-btn {
     background: none; border: 1px solid #333; border-radius: 4px;
     color: #555; font-size: 12px; padding: 4px 10px; cursor: pointer;
     font-family: -apple-system, sans-serif; white-space: nowrap;
     min-height: 30px;
   }
-  #clear-chat-btn:hover, #history-btn:hover { color: #aaa; border-color: #555; }
+  #reload-btn:hover, #clear-chat-btn:hover, #history-btn:hover { color: #aaa; border-color: #555; }
 
   /* Vocab debug panel */
   #vocab-debug {
@@ -506,6 +506,7 @@
 <div id="top-toolbar">
 <button id="history-btn" onclick="toggleChatHistory()" title="Chat history">history</button>
 <button id="clear-chat-btn" onclick="clearContext()" title="Clear loaded context petals">clear</button>
+<button id="reload-btn" onclick="reloadServer()" title="Restart AURYN server">reload</button>
 </div>
 <div id="chat-history-panel"></div>
 
@@ -3194,6 +3195,46 @@ function finishClaudeCode() {
 // Server reload
 // Pipeline mode toggle: "async" (high quality, 30s turbo) vs "sync" (real-time moonshine+whisper+gatekeeper)
 const pipelineMode = 'async';
+
+function reloadServer() {
+  const UV_PATH = '/Users/davidrug/.local/bin/uv';
+  const restartCmd = `lsof -ti :${AURYN_PORT} | xargs kill -9 2>/dev/null; sleep 1; ${UV_PATH} run auryn.py serve --port ${AURYN_PORT} --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
+  connectionStatus.style.display = 'block';
+  connectionStatus.textContent = 'Restarting server...';
+  connectionStatus.className = 'disconnected';
+
+  // Try CLI bridge first (preferred — avoids page reload)
+  _cliExec(restartCmd).then(result => {
+    if (result.code === -1 && result.err === 'timeout') {
+      // CLI bridge unavailable — fall back to server-side restart via HTTP
+      fetch(SERVER_BASE + '/reload', { method: 'POST' }).catch(() => {});
+    }
+    // Poll until server is back up
+    let attempts = 0;
+    const poll = () => {
+      fetch(SERVER_BASE + '/ping')
+        .then(r => r.json())
+        .then(data => {
+          if (data.app === 'auryn') {
+            if (data.uuid) window._aurynUUID = data.uuid;
+            connectionStatus.textContent = '';
+            connectionStatus.style.display = 'none';
+            requestDreamNodeCatalog();
+            loadCoreVocab();
+            connectAIBridgeWs();
+            connectTranscriptionWs();
+          } else { retry(); }
+        })
+        .catch(retry);
+    };
+    const retry = () => {
+      attempts++;
+      if (attempts < 30) setTimeout(poll, 1000);
+      else connectionStatus.textContent = 'Server failed to restart. Check /tmp/auryn-server.log';
+    };
+    setTimeout(poll, 1500);
+  });
+}
 
 // ============================================================
 // 10. EVENT HANDLERS
