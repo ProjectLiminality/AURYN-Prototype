@@ -610,26 +610,39 @@ async function startAurynServer() {
     return;
   }
 
-  // Find uv: try common install locations if `which uv` failed (Obsidian has limited PATH)
-  const whichLine = probe.out.split('\n').find(l => l.trim().startsWith('/') && l.includes('uv'));
-  const uvPath = whichLine?.trim() || '$HOME/.cargo/bin/uv';
-  console.log('[AURYN] uv path:', uvPath);
-
-  // Kill any stale server, start fresh — source shell profile to get full PATH
-  const startCmd = `pkill -f "auryn.py serve" 2>/dev/null; sleep 0.3; PATH="$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:$PATH" ${uvPath} run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
+  // uv lives in ~/.local/bin on this system; inject known locations into PATH
+  const UV_PATH = '/Users/davidrug/.local/bin/uv';
+  const startCmd = `pkill -f "auryn.py serve" 2>/dev/null; sleep 0.3; ${UV_PATH} run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
   console.log('[AURYN] Starting server:', startCmd);
   const result = await _cliExec(startCmd);
   console.log('[AURYN] Server start out:', result.out);
   console.log('[AURYN] Server start err:', result.err);
   console.log('[AURYN] Server start code:', result.code);
 
-  // Give it 3s to come up (first run builds index — may take longer)
+  // Poll for server readiness (first run builds index — can take 10-15s)
   connectionStatus.textContent = 'Waiting for server...';
-  setTimeout(() => {
-    requestDreamNodeCatalog();
-    loadChat();
-    connectAIBridgeWs();
-  }, 3000);
+  let attempts = 0;
+  const pollServer = () => {
+    fetch(SERVER_BASE + '/catalog')
+      .then(r => r.json())
+      .then(data => {
+        console.log('[AURYN] Server ready, catalog:', data.length, 'nodes');
+        requestDreamNodeCatalog();
+        loadChat();
+        connectAIBridgeWs();
+      })
+      .catch(() => {
+        attempts++;
+        if (attempts < 20) {
+          connectionStatus.textContent = `Waiting for server... (${attempts})`;
+          setTimeout(pollServer, 1000);
+        } else {
+          connectionStatus.textContent = 'Server failed to start. Check /tmp/auryn-server.log';
+          console.error('[AURYN] Server did not start after 20s. Log:', '/tmp/auryn-server.log');
+        }
+      });
+  };
+  setTimeout(pollServer, 2000);
 }
 
 window.addEventListener('beforeunload', () => {
