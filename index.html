@@ -875,7 +875,7 @@ function renderPetals() {
 
     // Try DreamTalk API first, then dreamTalkUrl, then initials fallback
     const img = document.createElement('img');
-    const apiUrl = BASE_PATH + '/api/dreamtalk/' + encodeURIComponent(node.id || '');
+    const apiUrl = SERVER_BASE + '/api/dreamtalk/' + encodeURIComponent(node.id || '');
     img.src = node.dreamTalkUrl || apiUrl;
     img.alt = node.title;
     img.onerror = () => {
@@ -1691,7 +1691,7 @@ function _buildAurynCard(seg) {
       if (detail.dreamTalk) {
         const img = document.createElement('img');
         img.className = 'auryn-thumb';
-        img.src = BASE_PATH + '/api/dreamtalk/' + encodeURIComponent(detail.id);
+        img.src = SERVER_BASE + '/api/dreamtalk/' + encodeURIComponent(detail.id);
         img.title = detail.title || detail.id;
         img.onerror = () => {
           const fb = document.createElement('span');
