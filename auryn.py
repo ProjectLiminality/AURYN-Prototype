@@ -4075,7 +4075,15 @@ def create_app(
     raw_html = index_path.read_text()
     injected_html = build_injected_index(raw_html, models=models)
 
-    app = web.Application()
+    @web.middleware
+    async def cors_middleware(request, handler):
+        response = await handler(request)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
+
+    app = web.Application(middlewares=[cors_middleware])
     app["injected_html"] = injected_html
     app["default_model"] = model
     app["ollama_url"] = ollama_url
