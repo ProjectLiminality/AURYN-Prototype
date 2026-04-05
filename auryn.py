@@ -48,6 +48,22 @@ import aiohttp
 from aiohttp import web
 
 AURYN_DIR = Path(__file__).parent.resolve()
+
+# Resolve ffmpeg/ffprobe at startup — uv subprocess doesn't inherit Homebrew PATH
+def _find_bin(name: str) -> str:
+    """Find a binary, checking common Homebrew locations if not on PATH."""
+    import shutil
+    found = shutil.which(name)
+    if found:
+        return found
+    for prefix in ["/opt/homebrew/bin", "/usr/local/bin"]:
+        candidate = Path(prefix) / name
+        if candidate.exists():
+            return str(candidate)
+    return name  # fall back to bare name, will fail with a clear error
+
+FFMPEG = _find_bin("ffmpeg")
+FFPROBE = _find_bin("ffprobe")
 RECORDINGS_DIR = AURYN_DIR / "recordings"
 TRANSCRIPTS_DIR = AURYN_DIR / "transcripts"
 VAULT_DIR = AURYN_DIR.parent  # RealDealVault
@@ -2082,7 +2098,7 @@ async def _decode_webm_chunk_to_pcm(webm_data: bytes) -> list[float] | None:
     """Decode webm/opus audio bytes to PCM float samples at 16kHz mono.
     Returns list of floats or None on failure."""
     proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-y", "-i", "pipe:0",
+        FFMPEG, "-y", "-i", "pipe:0",
         "-ar", "16000", "-ac", "1", "-f", "f32le", "pipe:1",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
@@ -2122,7 +2138,7 @@ def _transcribe_sync(wav_path: str, prompt: str = "", repo: str | None = None) -
 async def _probe_duration_file(path: str) -> float | None:
     """Get duration in seconds of an audio file on disk."""
     proc = await asyncio.create_subprocess_exec(
-        "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+        FFPROBE, "-v", "quiet", "-show_entries", "format=duration",
         "-of", "csv=p=0", path,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -2138,7 +2154,7 @@ async def _extract_time_range_file(path: str, start_sec: float, max_duration: fl
     """Extract audio from start_sec into a WAV file. Optionally limit duration."""
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp.close()
-    cmd = ["ffmpeg", "-y", "-ss", f"{start_sec:.2f}", "-i", path]
+    cmd = [FFMPEG, "-y", "-ss", f"{start_sec:.2f}", "-i", path]
     if max_duration is not None:
         cmd.extend(["-t", f"{max_duration:.2f}"])
     cmd.extend(["-ar", "16000", "-ac", "1", tmp.name])
@@ -2162,7 +2178,7 @@ async def _decode_webm_to_wav(webm_data: bytes) -> str | None:
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp.close()
     proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-y", "-i", "pipe:0",
+        FFMPEG, "-y", "-i", "pipe:0",
         "-ar", "16000", "-ac", "1", tmp.name,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
