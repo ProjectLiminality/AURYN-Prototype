@@ -595,14 +595,33 @@ async function startAurynServer() {
   connectionStatus.style.display = 'block';
   connectionStatus.textContent = 'Starting AURYN server...';
   connectionStatus.className = 'disconnected';
-  // Kill any stale server, then start fresh on port 8080 (HTTP, no SSL needed for localhost)
-  await _cliExec('pkill -f "auryn.py serve" 2>/dev/null; sleep 0.3; uv run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl &');
-  // Give it 2s to come up, then connect
+
+  // First: probe the CLI bridge to confirm it's available
+  const probe = await _cliExec('echo "cli-bridge-ok" && which uv && uv --version');
+  console.log('[AURYN] CLI bridge probe:', probe);
+
+  if (probe.err === 'timeout' || !probe.out.includes('cli-bridge-ok')) {
+    console.error('[AURYN] CLI bridge not available — cannot auto-start server');
+    connectionStatus.textContent = 'CLI bridge unavailable. Run: uv run auryn.py serve --port 8080 --no-ssl';
+    return;
+  }
+
+  const uvPath = probe.out.split('\n').find(l => l.includes('/uv') && !l.includes('--version')) || 'uv';
+  console.log('[AURYN] uv path:', uvPath);
+
+  // Kill any stale server, start fresh using full uv path to avoid PATH issues
+  const startCmd = `pkill -f "auryn.py serve" 2>/dev/null; sleep 0.3; ${uvPath} run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
+  console.log('[AURYN] Starting server:', startCmd);
+  const result = await _cliExec(startCmd);
+  console.log('[AURYN] Server start result:', result);
+
+  // Give it 3s to come up (first run builds index — may take longer)
+  connectionStatus.textContent = 'Waiting for server...';
   setTimeout(() => {
     requestDreamNodeCatalog();
     loadChat();
     connectAIBridgeWs();
-  }, 2000);
+  }, 3000);
 }
 
 window.addEventListener('beforeunload', () => {
