@@ -2226,6 +2226,7 @@ _MAX_VOCAB_TERMS = 50
 def _build_vocab_prompt(
     pinned: list[str] | None = None,
     ephemeral: list[str] | None = None,
+    core: list[str] | None = None,
 ) -> str:
     """Build Whisper initial_prompt from pinned + ephemeral DreamNode titles.
 
@@ -2246,8 +2247,8 @@ def _build_vocab_prompt(
             seen.add(name.lower())
             terms.append(name)
 
-    # 1. Core DreamOS vocabulary — always present
-    for term in _CORE_VOCAB:
+    # 1. Core vocabulary — always present (user-configurable, falls back to defaults)
+    for term in (core if core is not None else _CORE_VOCAB):
         _add(term)
 
     # 2. Session-pinned titles (DreamNodes whose name appeared in transcript)
@@ -2288,6 +2289,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 
     # Vocabulary feedback loop state
     context_index = load_index()
+    session_core: list[str] = _load_core_vocab()  # loaded fresh each session
     pinned_vocab: list[str] = []   # DreamNodes whose name appeared in transcript (permanent)
     ephemeral_vocab: list[str] = []  # BM25 suggestions from recent text (rotating)
     sliding_window: list[str] = []  # last N transcript chunks for BM25 context
@@ -2323,7 +2325,7 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 if joined not in _vocab_lookup:
                     _vocab_lookup[joined] = info
 
-    vocab_prompt = _build_vocab_prompt()
+    vocab_prompt = _build_vocab_prompt(core=session_core)
     print(f"[Whisper] Initial vocab: {vocab_prompt}")
 
     _transcript_file: Path | None = None
@@ -2425,16 +2427,16 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
             plog(f"[Whisper] Ephemeral vocab updated: {ephemeral_vocab[:5]}")
 
     def _rebuild_prompt():
-        """Rebuild the vocab prompt from current pinned + ephemeral state."""
+        """Rebuild the vocab prompt from current core + pinned + ephemeral state."""
         nonlocal vocab_prompt
-        vocab_prompt = _build_vocab_prompt(pinned_vocab, ephemeral_vocab)
+        vocab_prompt = _build_vocab_prompt(pinned_vocab, ephemeral_vocab, session_core)
 
     async def _send_vocab_state():
         """Send current vocabulary state to UI for debugging."""
         try:
             await ws.send_json({
                 "type": "vocab_update",
-                "core": list(_CORE_VOCAB),
+                "core": list(session_core),
                 "pinned": list(pinned_vocab),
                 "ephemeral": list(ephemeral_vocab),
                 "prompt": vocab_prompt,
@@ -2888,7 +2890,8 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 pinned_vocab.clear()
                 ephemeral_vocab.clear()
                 sliding_window.clear()
-                vocab_prompt = _build_vocab_prompt()
+                session_core[:] = _load_core_vocab()  # reload in case user changed it
+                vocab_prompt = _build_vocab_prompt(core=session_core)
 
                 RECORDINGS_DIR.mkdir(exist_ok=True)
                 TRANSCRIPTS_DIR.mkdir(exist_ok=True)
@@ -3079,6 +3082,30 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 
 async def handle_ping(request: web.Request) -> web.Response:
     return web.json_response({"app": "auryn"})
+
+
+_CORE_VOCAB_FILE = INDEX_DIR / "core-vocab.txt"
+
+
+def _load_core_vocab() -> list[str]:
+    """Load core vocab from file, falling back to hardcoded defaults."""
+    if _CORE_VOCAB_FILE.exists():
+        terms = [t.strip() for t in _CORE_VOCAB_FILE.read_text().splitlines() if t.strip()]
+        if terms:
+            return terms
+    return list(_CORE_VOCAB)
+
+
+async def handle_core_vocab_get(request: web.Request) -> web.Response:
+    return web.json_response({"terms": _load_core_vocab()})
+
+
+async def handle_core_vocab_post(request: web.Request) -> web.Response:
+    data = await request.json()
+    terms = [t.strip() for t in data.get("terms", []) if t.strip()]
+    INDEX_DIR.mkdir(exist_ok=True)
+    _CORE_VOCAB_FILE.write_text("\n".join(terms))
+    return web.json_response({"ok": True, "terms": terms})
 
 
 async def handle_index(request: web.Request) -> web.Response:
@@ -4098,6 +4125,13 @@ def create_app(
 
     @web.middleware
     async def cors_middleware(request, handler):
+        if request.method == 'OPTIONS':
+            # Handle preflight directly — don't pass to route handler
+            return web.Response(headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type',
+            })
         response = await handler(request)
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
@@ -4128,6 +4162,8 @@ def create_app(
     app.router.add_post("/reload", handle_reload)
     app.router.add_get("/install-cert", handle_install_cert)
     app.router.add_get("/ping", handle_ping)
+    app.router.add_get("/api/core-vocab", handle_core_vocab_get)
+    app.router.add_post("/api/core-vocab", handle_core_vocab_post)
     app.router.add_get("/", handle_index)
     app.router.add_get("/{path:.*}", handle_static)
 

@@ -356,27 +356,43 @@
     position: fixed; top: 8px; right: 8px; z-index: 9999;
     display: flex; align-items: center; gap: 6px;
   }
-  #reload-btn, #clear-chat-btn, #pipeline-toggle, #history-btn {
+  #reload-btn, #clear-chat-btn, #history-btn {
     background: none; border: 1px solid #333; border-radius: 4px;
     color: #555; font-size: 12px; padding: 4px 10px; cursor: pointer;
     font-family: -apple-system, sans-serif; white-space: nowrap;
     min-height: 30px;
   }
-  #reload-btn:hover, #clear-chat-btn:hover, #pipeline-toggle:hover, #history-btn:hover { color: #aaa; border-color: #555; }
-  #pipeline-toggle.active { color: #4a9a7a; border-color: #4a9a7a; }
+  #reload-btn:hover, #clear-chat-btn:hover, #history-btn:hover { color: #aaa; border-color: #555; }
 
   /* Vocab debug panel */
   #vocab-debug {
-    display: none; padding: 6px 16px; background: #0a0a0a;
-    border-top: 1px solid #1a1a1a; font-size: 10px; line-height: 1.5;
+    display: block; padding: 6px 16px; background: #0a0a0a;
+    border-top: 1px solid #1a1a1a; font-size: 10px; line-height: 1.6;
     font-family: -apple-system, sans-serif; color: #555;
-    max-height: 80px; overflow-y: auto;
   }
-  #vocab-debug.active { display: block; }
-  #vocab-debug .vocab-label { color: #666; margin-right: 4px; }
+  #vocab-debug .vocab-label { color: #444; margin-right: 4px; }
   #vocab-debug .vocab-core { color: #555; }
   #vocab-debug .vocab-pinned { color: #FFD700; }
   #vocab-debug .vocab-ephemeral { color: #4a7a9a; }
+  #vocab-core-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  #vocab-edit-btn {
+    font-size: 9px; padding: 1px 6px; background: none;
+    border: 1px solid #333; color: #444; border-radius: 3px; cursor: pointer;
+    flex-shrink: 0;
+  }
+  #vocab-edit-btn:hover { color: #888; border-color: #555; }
+  #vocab-edit-area { margin-top: 4px; }
+  #vocab-edit-input {
+    width: 100%; background: #111; border: 1px solid #333; color: #aaa;
+    font-size: 10px; padding: 4px; border-radius: 3px; resize: vertical;
+    font-family: -apple-system, sans-serif;
+  }
+  #vocab-edit-area button {
+    font-size: 9px; padding: 2px 8px; margin-top: 3px; margin-right: 4px;
+    background: none; border: 1px solid #333; color: #666;
+    border-radius: 3px; cursor: pointer;
+  }
+  #vocab-edit-area button:hover { color: #aaa; border-color: #555; }
 
   /* ===== AURYN COMMAND CARDS ===== */
   .auryn-card {
@@ -488,7 +504,6 @@
 <body>
 <div id="connection-status"></div>
 <div id="top-toolbar">
-<button id="pipeline-toggle" class="active" onclick="togglePipeline()" title="Toggle transcription mode: async (high quality, 30s chunks) vs sync (real-time, lower quality)">async</button>
 <button id="history-btn" onclick="toggleChatHistory()" title="Chat history">history</button>
 <button id="clear-chat-btn" onclick="clearChat()" title="Clear chat (archives current thread)">clear</button>
 <button id="reload-btn" onclick="reloadServer()" title="Restart AURYN server">reload</button>
@@ -526,7 +541,18 @@
   </div>
 </div>
 
-<div id="vocab-debug"></div>
+<div id="vocab-debug">
+  <div id="vocab-core-row">
+    <span class="vocab-label">core:</span><span class="vocab-core" id="vocab-core-display"></span>
+    <button id="vocab-edit-btn" onclick="toggleVocabEdit()" title="Edit core vocabulary">edit</button>
+  </div>
+  <div id="vocab-edit-area" style="display:none">
+    <textarea id="vocab-edit-input" rows="2" placeholder="One term per line or comma-separated"></textarea>
+    <button onclick="saveVocab()">save</button>
+    <button onclick="toggleVocabEdit()">cancel</button>
+  </div>
+  <div id="vocab-dynamic-row"></div>
+</div>
 <div id="drop-overlay">Drop files to add context</div>
 <div id="fallback-msg">
   Open in the <span class="accent">InterBrain</span> to chat with AURYN
@@ -608,6 +634,7 @@ async function startAurynServer() {
         console.log('[AURYN] Server already running — skipping auto-start');
         requestDreamNodeCatalog();
         loadChat();
+        loadCoreVocab();
         connectAIBridgeWs();
         return;
       } else {
@@ -663,6 +690,7 @@ async function startAurynServer() {
         console.log('[AURYN] Server ready, catalog:', data.length, 'nodes');
         requestDreamNodeCatalog();
         loadChat();
+        loadCoreVocab();
         connectAIBridgeWs();
       })
       .catch(() => {
@@ -2273,16 +2301,68 @@ async function sendMessage(text) {
 // 7b. VOCAB DEBUG
 // ============================================================
 function renderVocabDebug(data) {
-  const el = document.getElementById('vocab-debug');
   const tag = (cls, items) => items.length
     ? `<span class="vocab-label">${cls}:</span>` +
-      items.map(t => `<span class="vocab-${cls}">${t}</span>`).join(', ') + ' '
+      items.map(t => `<span class="vocab-${cls}">${t}</span>`).join(', ')
     : '';
-  el.innerHTML =
-    tag('core', data.core || []) +
-    tag('pinned', data.pinned || []) +
-    tag('ephemeral', data.ephemeral || []);
-  el.classList.add('active');
+  // Update core display (only if edit area is closed)
+  const coreDisplay = document.getElementById('vocab-core-display');
+  if (coreDisplay && document.getElementById('vocab-edit-area').style.display === 'none') {
+    coreDisplay.innerHTML = (data.core || []).map(t => `<span class="vocab-core">${t}</span>`).join(', ');
+  }
+  // Update pinned + ephemeral
+  const dynamicRow = document.getElementById('vocab-dynamic-row');
+  if (dynamicRow) {
+    const parts = [tag('pinned', data.pinned || []), tag('ephemeral', data.ephemeral || [])].filter(Boolean);
+    dynamicRow.innerHTML = parts.join(' &nbsp; ');
+  }
+}
+
+// Load core vocab from server and populate display on startup
+function loadCoreVocab() {
+  fetch(SERVER_BASE + '/api/core-vocab')
+    .then(r => r.json())
+    .then(data => {
+      const coreDisplay = document.getElementById('vocab-core-display');
+      if (coreDisplay) {
+        coreDisplay.innerHTML = (data.terms || []).map(t => `<span class="vocab-core">${t}</span>`).join(', ');
+      }
+    })
+    .catch(() => {});
+}
+
+function toggleVocabEdit() {
+  const area = document.getElementById('vocab-edit-area');
+  const input = document.getElementById('vocab-edit-input');
+  const coreDisplay = document.getElementById('vocab-core-display');
+  if (area.style.display === 'none') {
+    // Open: populate with current terms
+    fetch(SERVER_BASE + '/api/core-vocab')
+      .then(r => r.json())
+      .then(data => { input.value = (data.terms || []).join(', '); });
+    area.style.display = 'block';
+  } else {
+    area.style.display = 'none';
+  }
+}
+
+function saveVocab() {
+  const input = document.getElementById('vocab-edit-input');
+  const terms = input.value.split(/[\n,]+/).map(t => t.trim()).filter(Boolean);
+  fetch(SERVER_BASE + '/api/core-vocab', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ terms })
+  })
+    .then(r => r.json())
+    .then(data => {
+      const coreDisplay = document.getElementById('vocab-core-display');
+      if (coreDisplay) {
+        coreDisplay.innerHTML = (data.terms || []).map(t => `<span class="vocab-core">${t}</span>`).join(', ');
+      }
+      document.getElementById('vocab-edit-area').style.display = 'none';
+    })
+    .catch(e => console.error('[AURYN] Save vocab failed:', e));
 }
 
 // ============================================================
@@ -3081,25 +3161,14 @@ function finishClaudeCode() {
 // Server reload
 // Pipeline mode toggle: "async" (high quality, 30s turbo) vs "sync" (real-time moonshine+whisper+gatekeeper)
 let pipelineMode = 'async';
-function togglePipeline() {
-  pipelineMode = pipelineMode === 'async' ? 'sync' : 'async';
-  const btn = document.getElementById('pipeline-toggle');
-  btn.textContent = pipelineMode;
-  btn.classList.toggle('active', pipelineMode === 'async');
-  console.log('[AURYN] Pipeline mode:', pipelineMode);
-}
-
 function reloadServer() {
-  const protocol = window.location.protocol;
-  const host = window.location.host;
-  fetch(`${protocol}//${host}/reload`, { method: 'POST' })
+  fetch(SERVER_BASE + '/reload', { method: 'POST' })
     .then(() => {
       const msg = document.createElement('div');
       msg.className = 'msg assistant';
       msg.textContent = 'Server restarting... reconnecting in 5s.';
       messagesEl.appendChild(msg);
       scrollToBottom();
-      // Reconnect after restart
       setTimeout(() => { window.location.reload(); }, 5000);
     })
     .catch(e => {
