@@ -2213,8 +2213,7 @@ def _filter_hallucination(text: str) -> str:
 
 
 _CORE_VOCAB = [
-    "AURYN", "InterBrain", "DreamNode", "DreamOS", "DreamTalk",
-    "DreamSong", "PRISM", "ABRACADABRA", "Radicle",
+    "AURYN-Prototype", "InterBrain",
 ]
 
 # Max terms in Whisper's initial_prompt.
@@ -3081,7 +3080,15 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 # ============================================================
 
 async def handle_ping(request: web.Request) -> web.Response:
-    return web.json_response({"app": "auryn"})
+    udd = AURYN_DIR / ".udd"
+    uuid = None
+    if udd.exists():
+        try:
+            import json as _json
+            uuid = _json.loads(udd.read_text()).get("uuid")
+        except Exception:
+            pass
+    return web.json_response({"app": "auryn", "uuid": uuid})
 
 
 _CORE_VOCAB_FILE = INDEX_DIR / "core-vocab.txt"

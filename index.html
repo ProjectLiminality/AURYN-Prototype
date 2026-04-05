@@ -356,13 +356,13 @@
     position: fixed; top: 8px; right: 8px; z-index: 9999;
     display: flex; align-items: center; gap: 6px;
   }
-  #reload-btn, #clear-chat-btn, #history-btn {
+  #clear-chat-btn, #history-btn {
     background: none; border: 1px solid #333; border-radius: 4px;
     color: #555; font-size: 12px; padding: 4px 10px; cursor: pointer;
     font-family: -apple-system, sans-serif; white-space: nowrap;
     min-height: 30px;
   }
-  #reload-btn:hover, #clear-chat-btn:hover, #history-btn:hover { color: #aaa; border-color: #555; }
+  #clear-chat-btn:hover, #history-btn:hover { color: #aaa; border-color: #555; }
 
   /* Vocab debug panel */
   #vocab-debug {
@@ -505,8 +505,7 @@
 <div id="connection-status"></div>
 <div id="top-toolbar">
 <button id="history-btn" onclick="toggleChatHistory()" title="Chat history">history</button>
-<button id="clear-chat-btn" onclick="clearChat()" title="Clear chat (archives current thread)">clear</button>
-<button id="reload-btn" onclick="reloadServer()" title="Restart AURYN server">reload</button>
+<button id="clear-chat-btn" onclick="clearContext()" title="Clear loaded context petals">clear</button>
 </div>
 <div id="chat-history-panel"></div>
 
@@ -632,6 +631,7 @@ async function startAurynServer() {
       const data = await res.json();
       if (data.app === 'auryn') {
         console.log('[AURYN] Server already running — skipping auto-start');
+        if (data.uuid) window._aurynUUID = data.uuid;
         requestDreamNodeCatalog();
         loadChat();
         loadCoreVocab();
@@ -684,6 +684,10 @@ async function startAurynServer() {
         }
       });
     }
+    fetch(SERVER_BASE + '/ping')
+      .then(r => r.json())
+      .then(pong => { if (pong.uuid) window._aurynUUID = pong.uuid; })
+      .catch(() => {});
     fetch(SERVER_BASE + '/catalog')
       .then(r => r.json())
       .then(data => {
@@ -768,6 +772,11 @@ function loadChat() {
       }
     })
     .catch(err => console.warn('[AURYN] Chat load failed:', err));
+}
+
+function clearContext() {
+  contextNodes = [];
+  renderPetals();
 }
 
 function clearChat() {
@@ -957,13 +966,9 @@ function selectInDreamspace(nodeId) {
   console.log('[AURYN] Select in dreamspace:', nodeId);
 }
 
-// AURYN symbol click — select AURYN DreamNode in DreamSpace (UUID loaded from catalog)
+// AURYN symbol click — select this DreamNode in DreamSpace using UUID from .udd
 aurynSymbol.addEventListener('click', () => {
-  // Find AURYN in the catalog by folder name
-  const aurynNode = dreamNodeCatalog.find(n =>
-    n.folder === 'AURYN' || n.title === 'AURYN'
-  );
-  if (aurynNode) selectInDreamspace(aurynNode.id);
+  if (window._aurynUUID) selectInDreamspace(window._aurynUUID);
 });
 
 // ============================================================
@@ -3160,24 +3165,7 @@ function finishClaudeCode() {
 
 // Server reload
 // Pipeline mode toggle: "async" (high quality, 30s turbo) vs "sync" (real-time moonshine+whisper+gatekeeper)
-let pipelineMode = 'async';
-function reloadServer() {
-  fetch(SERVER_BASE + '/reload', { method: 'POST' })
-    .then(() => {
-      const msg = document.createElement('div');
-      msg.className = 'msg assistant';
-      msg.textContent = 'Server restarting... reconnecting in 5s.';
-      messagesEl.appendChild(msg);
-      scrollToBottom();
-      setTimeout(() => { window.location.reload(); }, 5000);
-    })
-    .catch(e => {
-      const msg = document.createElement('div');
-      msg.className = 'msg assistant';
-      msg.textContent = 'Reload failed: ' + e.message;
-      messagesEl.appendChild(msg);
-    });
-}
+const pipelineMode = 'async';
 
 // ============================================================
 // 10. EVENT HANDLERS
