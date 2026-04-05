@@ -2370,17 +2370,18 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 names.add(info["title"])
             canonical[uid] = list(names)
             info_by_uuid[uid] = info
+        text_lower = text.lower()
         for uid, names in canonical.items():
             if uid in seen_uuids:
                 continue
             for name in names:
                 if len(name) <= 3:
-                    if re.search(r'(?<![a-zA-Z])' + re.escape(name) + r'(?![a-zA-Z])', text):
+                    if re.search(r'(?<![a-zA-Z])' + re.escape(name) + r'(?![a-zA-Z])', text, re.IGNORECASE):
                         hits.append(info_by_uuid[uid])
                         seen_uuids.add(uid)
                         break
                 else:
-                    if name in text:
+                    if name.lower() in text_lower:
                         hits.append(info_by_uuid[uid])
                         seen_uuids.add(uid)
                         break
