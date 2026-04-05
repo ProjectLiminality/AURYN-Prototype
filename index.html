@@ -568,6 +568,47 @@ let aiBridgeReady = false;
 let standaloneMode = false;
 const BASE_PATH = ''; // Patched by server when served under a prefix (e.g. '/AURYN')
 
+// ============================================================
+// SERVER LIFECYCLE — auto-start/stop via InterBrain CLI bridge
+// ============================================================
+let _serverStarted = false;
+
+function _cliExec(cmd) {
+  return new Promise((resolve) => {
+    const id = crypto.randomUUID();
+    const handler = (e) => {
+      if (e.data?.type === 'cli-result' && e.data?.id === id) {
+        window.removeEventListener('message', handler);
+        resolve({ out: e.data.out || '', err: e.data.err || '', code: e.data.code ?? 0 });
+      }
+    };
+    window.addEventListener('message', handler);
+    window.parent.postMessage({ type: 'cli-exec', id, cmd }, '*');
+    // Timeout after 15s
+    setTimeout(() => { window.removeEventListener('message', handler); resolve({ out: '', err: 'timeout', code: -1 }); }, 15000);
+  });
+}
+
+async function startAurynServer() {
+  if (_serverStarted) return;
+  _serverStarted = true;
+  connectionStatus.style.display = 'block';
+  connectionStatus.textContent = 'Starting AURYN server...';
+  connectionStatus.className = 'disconnected';
+  // Kill any stale server, then start fresh on port 8080 (HTTP, no SSL needed for localhost)
+  await _cliExec('pkill -f "auryn.py serve" 2>/dev/null; sleep 0.3; uv run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl &');
+  // Give it 2s to come up, then connect
+  setTimeout(() => {
+    requestDreamNodeCatalog();
+    loadChat();
+    connectAIBridgeWs();
+  }, 2000);
+}
+
+window.addEventListener('beforeunload', () => {
+  _cliExec('pkill -f "auryn.py serve" 2>/dev/null');
+});
+
 // Fix AURYN symbol src so it resolves correctly in both standalone and iframe (reverse proxy) contexts
 document.querySelector('#auryn-symbol img').src = BASE_PATH + '/AURYN.jpg';
 
@@ -815,9 +856,13 @@ function selectInDreamspace(nodeId) {
   console.log('[AURYN] Select in dreamspace:', nodeId);
 }
 
-// AURYN symbol click → select AURYN itself
+// AURYN symbol click — select AURYN DreamNode in DreamSpace (UUID loaded from catalog)
 aurynSymbol.addEventListener('click', () => {
-  selectInDreamspace('53a3bb7a-3df8-4f36-af99-23787a8cec25'); // AURYN's UUID
+  // Find AURYN in the catalog by folder name
+  const aurynNode = dreamNodeCatalog.find(n =>
+    n.folder === 'AURYN' || n.title === 'AURYN'
+  );
+  if (aurynNode) selectInDreamspace(aurynNode.id);
 });
 
 // ============================================================
@@ -996,29 +1041,19 @@ window.addEventListener('message', (e) => {
 const isInIframe = window.parent !== window && !BASE_PATH;
 
 if (isInIframe) {
-  fallbackEl.style.display = 'block';
-  document.getElementById('chat-zone').style.display = 'none';
-  document.getElementById('context-zone').style.display = 'none';
-
-  window.parent.postMessage({ type: 'ai-bridge-probe', instanceId }, '*');
-  setTimeout(() => {
-    if (!aiBridgeReady) {
-      console.log('[AURYN] No AI bridge — showing fallback');
-    }
-  }, 500);
-} else {
-  // Standalone mode — connect to AI bridge WebSocket server
+  // Inside InterBrain — start the local server via CLI bridge, then connect via WS
   standaloneMode = true;
   fallbackEl.style.display = 'none';
   document.getElementById('chat-zone').style.display = '';
   document.getElementById('context-zone').style.display = '';
-  connectionStatus.style.display = 'block';
-  connectionStatus.textContent = 'Connecting to AURYN server...';
-  connectionStatus.className = 'disconnected';
-  console.log('[AURYN] Standalone mode — connecting to AURYN server /ws');
-  requestDreamNodeCatalog();
-  loadChat();
-  connectAIBridgeWs();
+  startAurynServer();
+} else {
+  // Opened directly in browser — show instructions
+  standaloneMode = false;
+  fallbackEl.style.display = 'block';
+  fallbackEl.innerHTML = 'Open in the <span class="accent">InterBrain</span> to use AURYN';
+  document.getElementById('chat-zone').style.display = 'none';
+  document.getElementById('context-zone').style.display = 'none';
 }
 
 function sendStreamRequest(messages) {
@@ -1066,15 +1101,8 @@ const AI_BRIDGE_PORT = 27182;
 let aiBridgeWs = null;
 
 function getAIBridgeWsUrl() {
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  if (standaloneMode) {
-    // Served by auryn.py — use the same origin's /ws endpoint
-    // which has the full agentic tool-calling loop
-    return `${wsProtocol}//${window.location.host}${BASE_PATH}/ws`;
-  }
-  // Inside InterBrain iframe — connect to the plugin's AI bridge
-  const host = window.location.hostname || 'localhost';
-  return `${wsProtocol}//${host}:${AI_BRIDGE_PORT}`;
+  // Always connect to our own local server (started via CLI bridge or run manually)
+  return 'ws://127.0.0.1:8080/ws';
 }
 
 function connectAIBridgeWs() {
@@ -1862,7 +1890,8 @@ function handleToolCallResult(toolName, result) {
     try {
       const parsed = JSON.parse(result);
       if (parsed.action === 'reveal_file') {
-        const fileUrl = BASE_PATH + '/api/file?path=' + encodeURIComponent(parsed.relPath);
+        // Serve the file via local server (started by CLI bridge on port 8080)
+        const fileUrl = 'http://127.0.0.1:8080/api/file?path=' + encodeURIComponent(parsed.relPath);
         const msg = {
           type: 'auryn-reveal-file',
           fileUrl: fileUrl,
@@ -1874,6 +1903,8 @@ function handleToolCallResult(toolName, result) {
           dreamnodeFolder: parsed.dreamnodeFolder,
         };
         window.parent.postMessage(msg, '*');
+        // Also select the DreamNode in DreamSpace
+        if (parsed.dreamnodeId) selectInDreamspace(parsed.dreamnodeId);
         console.log('[AURYN] reveal_file →', msg);
       }
     } catch (e) { /* not JSON or parse error */ }
