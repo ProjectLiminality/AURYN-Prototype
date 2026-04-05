@@ -617,9 +617,31 @@ function _cliExec(cmd) {
   });
 }
 
+// Cross-iframe coordination: only one AURYN instance should be active at a time
+const _aurynChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('auryn-instance') : null;
+let _isActiveInstance = false;
+
+if (_aurynChannel) {
+  _aurynChannel.onmessage = (e) => {
+    if (e.data === 'active' && !_isActiveInstance) {
+      // Another instance is active — show passive message and hide UI
+      document.getElementById('chat-zone').style.display = 'none';
+      document.getElementById('context-zone').style.display = 'none';
+      connectionStatus.style.display = 'block';
+      connectionStatus.textContent = 'AURYN is already open in another panel.';
+      connectionStatus.className = 'disconnected';
+    }
+  };
+}
+
 async function startAurynServer() {
   if (_serverStarted) return;
   _serverStarted = true;
+
+  // Claim this instance as active; any other open instance will defer
+  _isActiveInstance = true;
+  if (_aurynChannel) _aurynChannel.postMessage('active');
+
   connectionStatus.style.display = 'block';
   connectionStatus.textContent = 'Connecting to AURYN server...';
   connectionStatus.className = 'disconnected';
