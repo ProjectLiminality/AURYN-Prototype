@@ -624,7 +624,11 @@ let _isActiveInstance = false;
 
 function _goPassive() {
   _isActiveInstance = false;
-  _serverStarted = false; // allow future takeover if needed
+  _serverStarted = false;
+  // Disconnect all WS connections so this instance doesn't compete
+  if (transcriptionWs) { transcriptionWs.onclose = null; transcriptionWs.close(); transcriptionWs = null; }
+  if (aiBridgeWs) { aiBridgeWs.onclose = null; aiBridgeWs.close(); aiBridgeWs = null; }
+  micBtn.disabled = true;
   document.getElementById('chat-zone').style.display = 'none';
   document.getElementById('context-zone').style.display = 'none';
   connectionStatus.style.display = 'block';
