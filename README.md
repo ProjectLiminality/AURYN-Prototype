@@ -17,7 +17,6 @@ Install it into the [InterBrain](https://github.com/projectliminality/InterBrain
 - DreamNode names from your garden are injected as transcription hints — the model learns your language
 - First pass transcribes, feeds BM25 semantic search, enriches vocabulary; second pass retranscribes with enriched vocab
 - Detected DreamNode names load as petals automatically
-- Drop an audio file into the chat to transcribe it the same way
 
 **Chat**
 - Streams responses from Claude using your loaded petals as context
@@ -60,7 +59,6 @@ Open AURYN in the InterBrain and open its custom UI. The server starts automatic
 
 - **`@` + name** — reference a DreamNode, load it as context
 - **Mic button** — record voice; DreamNode names detected and loaded as petals
-- **Drag audio file** — transcribe with the same vocabulary-aware pipeline
 - **Click petal** — navigate to that DreamNode in DreamSpace
 - **clear** — drop all loaded context petals
 - **history** — browse and resume previous chat sessions
