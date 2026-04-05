@@ -621,8 +621,19 @@ async function startAurynServer() {
 
   // Poll for server readiness (first run builds index — can take 10-15s)
   connectionStatus.textContent = 'Waiting for server...';
+  // Poll up to 5 minutes — first run downloads Python + ML dependencies (~200MB)
   let attempts = 0;
+  const MAX_ATTEMPTS = 300; // 300 × 1s = 5 min
   const pollServer = () => {
+    // Show live download progress from log file every 5s
+    if (attempts % 5 === 0) {
+      _cliExec('tail -3 /tmp/auryn-server.log 2>/dev/null').then(r => {
+        if (r.out.trim()) {
+          const lastLine = r.out.trim().split('\n').pop();
+          connectionStatus.textContent = `Installing... ${lastLine.slice(0, 60)}`;
+        }
+      });
+    }
     fetch(SERVER_BASE + '/catalog')
       .then(r => r.json())
       .then(data => {
@@ -633,12 +644,11 @@ async function startAurynServer() {
       })
       .catch(() => {
         attempts++;
-        if (attempts < 20) {
-          connectionStatus.textContent = `Waiting for server... (${attempts})`;
+        if (attempts < MAX_ATTEMPTS) {
           setTimeout(pollServer, 1000);
         } else {
-          connectionStatus.textContent = 'Server failed to start. Check /tmp/auryn-server.log';
-          console.error('[AURYN] Server did not start after 20s. Log:', '/tmp/auryn-server.log');
+          connectionStatus.textContent = 'Server failed to start after 5min. Check /tmp/auryn-server.log';
+          console.error('[AURYN] Server did not start. Log:', '/tmp/auryn-server.log');
         }
       });
   };
