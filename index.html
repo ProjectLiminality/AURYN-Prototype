@@ -661,7 +661,7 @@ window.addEventListener('beforeunload', () => {
 });
 
 // Fix AURYN symbol src so it resolves correctly in both standalone and iframe (reverse proxy) contexts
-document.querySelector('#auryn-symbol img').src = BASE_PATH + '/AURYN.jpg';
+document.querySelector('#auryn-symbol img').src = SERVER_BASE + '/AURYN.jpg';
 
 // Transcription state
 let isRecording = false;
@@ -2271,7 +2271,7 @@ function getTranscriptionWsUrl() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${wsProtocol}//${window.location.host}${BASE_PATH}/ws/transcribe`;
   }
-  return `ws://localhost:3002/ws/transcribe`;
+  return `ws://127.0.0.1:8080/ws/transcribe`;
 }
 
 function connectTranscriptionWs() {
