@@ -521,6 +521,7 @@
 <!-- CHAT ZONE: messages + input -->
 <div id="chat-zone">
   <div id="messages"></div>
+  <div id="attachment-staging"></div>
   <div id="input-area">
     <div id="autocomplete"></div>
     <textarea id="input" rows="1" placeholder="Talk to AURYN... (@ to reference DreamNodes)" autofocus></textarea>
@@ -565,8 +566,8 @@ const inputEl = document.getElementById('input');
 const sendBtn = document.getElementById('send-btn');
 const stopBtn = document.getElementById('stop-btn');
 const micBtn = document.getElementById('mic-btn');
-const attachBtn = document.getElementById('attach-btn');
-const attachInput = document.getElementById('attach-input');
+// const attachBtn = document.getElementById('attach-btn');
+// const attachInput = document.getElementById('attach-input');
 const fallbackEl = document.getElementById('fallback-msg');
 const dropOverlay = document.getElementById('drop-overlay');
 const connectionStatus = document.getElementById('connection-status');
@@ -3249,14 +3250,12 @@ sendBtn.addEventListener('click', async () => {
 });
 stopBtn.addEventListener('click', () => { cancelStream(); });
 
-attachBtn.addEventListener('click', () => { attachInput.click(); });
-attachInput.addEventListener('change', async () => {
-  const files = [...attachInput.files];
-  attachInput.value = ''; // reset so same file can be picked again
-  for (const file of files) {
-    stageFile(file);
-  }
-});
+// attachBtn.addEventListener('click', () => { attachInput.click(); });
+// attachInput.addEventListener('change', async () => {
+//   const files = [...attachInput.files];
+//   attachInput.value = '';
+//   for (const file of files) { stageFile(file); }
+// });
 
 // Note: no beforeunload handler — Claude Code sessions survive disconnections
 
