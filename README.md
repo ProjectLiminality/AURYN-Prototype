@@ -24,7 +24,7 @@ AURYN is a voice-first AI assistant for the [InterBrain](https://github.com/proj
 Click this link with Obsidian open:
 
 ```
-obsidian://interbrain-clone?ids=github.com/projectliminality/AURYN
+obsidian://interbrain-clone?ids=github.com/projectliminality/AURYN-Prototype
 ```
 
 This clones AURYN into your vault root and registers it as a DreamNode.
