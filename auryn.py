@@ -3060,6 +3060,10 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 # Static file serving
 # ============================================================
 
+async def handle_ping(request: web.Request) -> web.Response:
+    return web.json_response({"app": "auryn"})
+
+
 async def handle_index(request: web.Request) -> web.Response:
     return web.Response(
         text=request.app["injected_html"],
@@ -4106,6 +4110,7 @@ def create_app(
     app.router.add_get("/api/dreamtalk/{id}", handle_dreamtalk)
     app.router.add_post("/reload", handle_reload)
     app.router.add_get("/install-cert", handle_install_cert)
+    app.router.add_get("/ping", handle_ping)
     app.router.add_get("/", handle_index)
     app.router.add_get("/{path:.*}", handle_static)
 

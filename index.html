@@ -567,8 +567,9 @@ let fontLoaded = false;
 let aiBridgeReady = false;
 let standaloneMode = false;
 const BASE_PATH = ''; // Patched by server when served under a prefix (e.g. '/AURYN')
-// When inside InterBrain iframe, HTTP calls go to the local server on port 8080
-const SERVER_BASE = 'http://127.0.0.1:8080';
+// When inside InterBrain iframe, HTTP calls go to the local AURYN server
+const AURYN_PORT = 47392;
+const SERVER_BASE = `http://127.0.0.1:${AURYN_PORT}`;
 
 // ============================================================
 // SERVER LIFECYCLE — auto-start/stop via InterBrain CLI bridge
@@ -595,10 +596,31 @@ async function startAurynServer() {
   if (_serverStarted) return;
   _serverStarted = true;
   connectionStatus.style.display = 'block';
-  connectionStatus.textContent = 'Starting AURYN server...';
+  connectionStatus.textContent = 'Connecting to AURYN server...';
   connectionStatus.className = 'disconnected';
 
-  // First: probe the CLI bridge to confirm it's available
+  // First: check if the AURYN server is already running on our port
+  try {
+    const res = await fetch(SERVER_BASE + '/ping');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.app === 'auryn') {
+        console.log('[AURYN] Server already running — skipping auto-start');
+        requestDreamNodeCatalog();
+        loadChat();
+        connectAIBridgeWs();
+        return;
+      } else {
+        console.warn('[AURYN] Something else is on port', AURYN_PORT, '— aborting');
+        connectionStatus.textContent = `Port ${AURYN_PORT} is in use by another app. Please free it.`;
+        return;
+      }
+    }
+  } catch (e) {
+    // Server not up yet — proceed to auto-start
+  }
+
+  // Probe CLI bridge to see if we can auto-start
   const probe = await _cliExec('echo "cli-bridge-ok" && which uv && uv --version');
   console.log('[AURYN] CLI bridge probe out:', probe.out);
   console.log('[AURYN] CLI bridge probe err:', probe.err);
@@ -606,14 +628,14 @@ async function startAurynServer() {
 
   if (probe.err === 'timeout' || !probe.out.includes('cli-bridge-ok')) {
     console.error('[AURYN] CLI bridge not available — cannot auto-start server');
-    connectionStatus.textContent = 'CLI bridge unavailable. Run: uv run auryn.py serve --port 8080 --no-ssl';
+    connectionStatus.textContent = `Server not running. Start it with: uv run auryn.py serve --port ${AURYN_PORT} --no-ssl`;
     return;
   }
 
   // uv lives in ~/.local/bin on this system; inject known locations into PATH
   const UV_PATH = '/Users/davidrug/.local/bin/uv';
-  // Kill anything on port 8080 (covers any prior auryn.py process regardless of how it was started)
-  const startCmd = `lsof -ti :8080 | xargs kill -9 2>/dev/null; sleep 0.5; ${UV_PATH} run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
+  // Kill any prior AURYN process on our port before starting fresh
+  const startCmd = `lsof -ti :${AURYN_PORT} | xargs kill -9 2>/dev/null; sleep 0.5; ${UV_PATH} run auryn.py serve --port ${AURYN_PORT} --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
   console.log('[AURYN] Starting server:', startCmd);
   const result = await _cliExec(startCmd);
   console.log('[AURYN] Server start out:', result.out);
@@ -1153,7 +1175,7 @@ let aiBridgeWs = null;
 
 function getAIBridgeWsUrl() {
   // Always connect to our own local server (started via CLI bridge or run manually)
-  return 'ws://127.0.0.1:8080/ws';
+  return `ws://127.0.0.1:${AURYN_PORT}/ws`;
 }
 
 function connectAIBridgeWs() {
@@ -1941,8 +1963,8 @@ function handleToolCallResult(toolName, result) {
     try {
       const parsed = JSON.parse(result);
       if (parsed.action === 'reveal_file') {
-        // Serve the file via local server (started by CLI bridge on port 8080)
-        const fileUrl = 'http://127.0.0.1:8080/api/file?path=' + encodeURIComponent(parsed.relPath);
+        // Serve the file via local AURYN server
+        const fileUrl = `http://127.0.0.1:${AURYN_PORT}/api/file?path=` + encodeURIComponent(parsed.relPath);
         const msg = {
           type: 'auryn-reveal-file',
           fileUrl: fileUrl,
@@ -2267,11 +2289,11 @@ function renderVocabDebug(data) {
 // 8. TRANSCRIPTION (VOICE)
 // ============================================================
 function getTranscriptionWsUrl() {
-  if (standaloneMode) {
+  if (standaloneMode && window.location.host) {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${wsProtocol}//${window.location.host}${BASE_PATH}/ws/transcribe`;
   }
-  return `ws://127.0.0.1:8080/ws/transcribe`;
+  return `ws://127.0.0.1:${AURYN_PORT}/ws/transcribe`;
 }
 
 function connectTranscriptionWs() {
