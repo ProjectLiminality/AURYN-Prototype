@@ -567,6 +567,8 @@ let fontLoaded = false;
 let aiBridgeReady = false;
 let standaloneMode = false;
 const BASE_PATH = ''; // Patched by server when served under a prefix (e.g. '/AURYN')
+// When inside InterBrain iframe, HTTP calls go to the local server on port 8080
+const SERVER_BASE = 'http://127.0.0.1:8080';
 
 // ============================================================
 // SERVER LIFECYCLE — auto-start/stop via InterBrain CLI bridge
@@ -608,12 +610,13 @@ async function startAurynServer() {
     return;
   }
 
-  // Extract full uv path from `which uv` output
-  const uvPath = probe.out.split('\n').find(l => l.trim().startsWith('/') && l.includes('uv')) || 'uv';
+  // Find uv: try common install locations if `which uv` failed (Obsidian has limited PATH)
+  const whichLine = probe.out.split('\n').find(l => l.trim().startsWith('/') && l.includes('uv'));
+  const uvPath = whichLine?.trim() || '$HOME/.cargo/bin/uv';
   console.log('[AURYN] uv path:', uvPath);
 
-  // Kill any stale server, start fresh using full uv path to avoid PATH issues
-  const startCmd = `pkill -f "auryn.py serve" 2>/dev/null; sleep 0.3; ${uvPath} run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
+  // Kill any stale server, start fresh — source shell profile to get full PATH
+  const startCmd = `pkill -f "auryn.py serve" 2>/dev/null; sleep 0.3; PATH="$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:$PATH" ${uvPath} run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
   console.log('[AURYN] Starting server:', startCmd);
   const result = await _cliExec(startCmd);
   console.log('[AURYN] Server start out:', result.out);
@@ -674,7 +677,7 @@ Keep responses concise and grounded. Use metaphor when it illuminates, not to ob
 // ============================================================
 function saveChat() {
   if (conversation.length === 0) return;
-  fetch(BASE_PATH + '/chat/save', {
+  fetch(SERVER_BASE + '/chat/save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ threadId: chatThreadId, messages: conversation }),
@@ -682,7 +685,7 @@ function saveChat() {
 }
 
 function loadChat() {
-  return fetch(`${BASE_PATH}/chat/load?threadId=${chatThreadId}`)
+  return fetch(`${SERVER_BASE}/chat/load?threadId=${chatThreadId}`)
     .then(r => r.json())
     .then(data => {
       if (data.messages && data.messages.length > 0) {
@@ -694,7 +697,7 @@ function loadChat() {
 }
 
 function clearChat() {
-  fetch(BASE_PATH + '/chat/clear', {
+  fetch(SERVER_BASE + '/chat/clear', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ threadId: chatThreadId }),
@@ -743,7 +746,7 @@ function requestDreamNodeCatalog() {
     window.parent.postMessage({ type: 'dreamnode-catalog-request' }, '*');
   }
   // Fetch real catalog from server
-  fetch(BASE_PATH + '/catalog')
+  fetch(SERVER_BASE + '/catalog')
     .then(r => r.json())
     .then(data => {
       if (data.nodes && data.nodes.length > 0) {
@@ -1789,7 +1792,7 @@ function handleToolCallStart(toolName, toolInput, cwd, aurynMeta, silent) {
       openBtn.title = 'Open session in Terminal';
       openBtn.style.cssText = 'font-size:14px;';
       openBtn.addEventListener('click', () => {
-        fetch(BASE_PATH + '/api/spawn-terminal', {
+        fetch(SERVER_BASE + '/api/spawn-terminal', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cwd }),
@@ -2180,7 +2183,7 @@ async function sendMessage(text) {
   let systemContent = SYSTEM_PROMPT;
   if (contextNodes.length > 0) {
     const readmePromises = contextNodes.map(n =>
-      fetch(BASE_PATH + '/readme?path=' + encodeURIComponent(n.path || n.absPath || n.repoPath || ''))
+      fetch(SERVER_BASE + '/readme?path=' + encodeURIComponent(n.path || n.absPath || n.repoPath || ''))
         .then(r => r.json())
         .catch(() => null)
     );
@@ -2483,7 +2486,7 @@ function stageFile(file) {
   // Upload immediately
   const formData = new FormData();
   formData.append('file', file);
-  fetch(BASE_PATH + '/upload', { method: 'POST', body: formData })
+  fetch(SERVER_BASE + '/upload', { method: 'POST', body: formData })
     .then(r => r.json())
     .then(result => {
       const uploaded = result.files[0];
@@ -2709,7 +2712,7 @@ function toggleChatHistory() {
 }
 
 function loadChatHistory() {
-  fetch(BASE_PATH + '/chat/list')
+  fetch(SERVER_BASE + '/chat/list')
     .then(r => r.json())
     .then(data => {
       renderChatHistoryList(data.chats || []);
