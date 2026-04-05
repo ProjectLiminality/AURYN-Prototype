@@ -598,7 +598,9 @@ async function startAurynServer() {
 
   // First: probe the CLI bridge to confirm it's available
   const probe = await _cliExec('echo "cli-bridge-ok" && which uv && uv --version');
-  console.log('[AURYN] CLI bridge probe:', probe);
+  console.log('[AURYN] CLI bridge probe out:', probe.out);
+  console.log('[AURYN] CLI bridge probe err:', probe.err);
+  console.log('[AURYN] CLI bridge probe code:', probe.code);
 
   if (probe.err === 'timeout' || !probe.out.includes('cli-bridge-ok')) {
     console.error('[AURYN] CLI bridge not available — cannot auto-start server');
@@ -606,14 +608,17 @@ async function startAurynServer() {
     return;
   }
 
-  const uvPath = probe.out.split('\n').find(l => l.includes('/uv') && !l.includes('--version')) || 'uv';
+  // Extract full uv path from `which uv` output
+  const uvPath = probe.out.split('\n').find(l => l.trim().startsWith('/') && l.includes('uv')) || 'uv';
   console.log('[AURYN] uv path:', uvPath);
 
   // Kill any stale server, start fresh using full uv path to avoid PATH issues
   const startCmd = `pkill -f "auryn.py serve" 2>/dev/null; sleep 0.3; ${uvPath} run auryn.py serve --port 8080 --host 127.0.0.1 --no-ssl > /tmp/auryn-server.log 2>&1 &`;
   console.log('[AURYN] Starting server:', startCmd);
   const result = await _cliExec(startCmd);
-  console.log('[AURYN] Server start result:', result);
+  console.log('[AURYN] Server start out:', result.out);
+  console.log('[AURYN] Server start err:', result.err);
+  console.log('[AURYN] Server start code:', result.code);
 
   // Give it 3s to come up (first run builds index — may take longer)
   connectionStatus.textContent = 'Waiting for server...';
