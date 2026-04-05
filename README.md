@@ -15,9 +15,13 @@ AURYN is a voice-first AI assistant for the [InterBrain](https://github.com/proj
 
 1. [InterBrain](https://github.com/projectliminality/InterBrain) installed in Obsidian
 2. Claude API key set in InterBrain settings (Settings → AI Magic → Claude API Key)
-3. [uv](https://docs.astral.sh/uv/getting-started/installation/) installed — `curl -LsSf https://astral.sh/uv/install.sh | sh`
+3. [uv](https://docs.astral.sh/uv/getting-started/installation/) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-**Transcription** additionally requires macOS with Apple Silicon (uses mlx-whisper). Chat and search work on any platform.
+**Transcription** additionally requires:
+- macOS with Apple Silicon (uses mlx-whisper large-v3-turbo)
+- [ffmpeg](https://ffmpeg.org/) — `brew install ffmpeg`
+
+Chat and search work on any platform.
 
 ## Install
 
@@ -47,5 +51,6 @@ The server starts automatically. On first launch it will take ~10 seconds to bui
 ## Notes
 
 - AURYN uses Claude via the API key you set in InterBrain settings — no separate key needed
-- The server runs locally on port 8080 while the custom UI is open and stops when you close it
+- The server runs locally on port 47392 while the custom UI is open and stops when you close it
+- Recordings are saved to `recordings/` and daily transcripts to `transcripts/` — both gitignored
 - This is a prototype — things may be rough around the edges

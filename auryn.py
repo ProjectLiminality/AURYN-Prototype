@@ -3,7 +3,6 @@
 # dependencies = [
 #     "aiohttp>=3.9",
 #     "mlx-whisper>=0.4",
-#     "moonshine-voice>=0.0.49",
 # ]
 # ///
 """
@@ -2502,8 +2501,8 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
 
     last_transcribed_sec = 0.0  # seconds of audio already transcribed
 
-    # --- Three-stage pipeline state ---
-    moonshine = _get_moonshine()
+    # --- Three-stage pipeline state (sync mode only — not loaded in async mode) ---
+    moonshine = None  # lazy-loaded only if sync pipeline is requested
     moonshine_interval = 3.0  # Stage 1: fast cycle (3s)
     moonshine_last_sec = 0.0  # audio seconds already processed by Moonshine
     # Track Moonshine chunks by index for retroactive correction
@@ -2916,7 +2915,8 @@ async def ws_transcribe(request: web.Request) -> web.WebSocketResponse:
                 pipeline_mode = data.get("pipeline_mode", "async")
 
                 if pipeline_mode == "sync":
-                    # Three-stage: Moonshine → Whisper → Gatekeeper
+                    # Three-stage: Moonshine → Whisper → Gatekeeper (lazy-load Moonshine here)
+                    moonshine = _get_moonshine()
                     moonshine_task = asyncio.create_task(periodic_moonshine())
                     process_task = asyncio.create_task(periodic_whisper_and_gatekeeper())
                     plog(f"[Pipeline] Started: Moonshine→Whisper→Gatekeeper (sync mode)")
